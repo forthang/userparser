@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: taxi_parser_bot
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - API_ID=${API_ID}
+      - API_HASH=${API_HASH}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-taxi_parser}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - YUKASSA_SHOP_ID=${YUKASSA_SHOP_ID}
+      - YUKASSA_SECRET_KEY=${YUKASSA_SECRET_KEY}
+      - SUBSCRIPTION_PRICE=${SUBSCRIPTION_PRICE:-1000}
+      - SUBSCRIPTION_DAYS=${SUBSCRIPTION_DAYS:-30}
+      - ADMIN_IDS=${ADMIN_IDS}
+      - RESPONSE_TEXT=${RESPONSE_TEXT}
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - bot_network
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: taxi_parser_db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${DB_NAME:-taxi_parser}
+      - POSTGRES_USER=${DB_USER:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - bot_network
+
+networks:
+  bot_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
