@@ -9,8 +9,8 @@ from bot.config import config
 from bot.database.connection import init_db, async_session
 from bot.database.crud import UserCRUD
 from bot.services.scheduler import get_scheduler
-from bot.handlers import start, groups, keywords, cities, monitoring, subscription
-from bot.handlers.monitoring import process_group_message
+from bot.handlers import start, groups, keywords, cities, monitoring, subscription, admin
+from bot.handlers.monitoring import process_group_message, set_bot_instance
 from userbot.client import userbot_pool
 
 logging.basicConfig(
@@ -25,6 +25,9 @@ async def on_startup(bot: Bot):
 
     await init_db()
     logger.info("Database initialized")
+
+    # Устанавливаем инстанс бота для monitoring handler
+    set_bot_instance(bot)
 
     scheduler = get_scheduler(bot)
     await scheduler.start()
@@ -104,6 +107,7 @@ async def main():
     dp.include_router(cities.router)
     dp.include_router(monitoring.router)
     dp.include_router(subscription.router)
+    dp.include_router(admin.router)
 
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)

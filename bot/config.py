@@ -89,7 +89,7 @@ def load_config() -> Config:
         encryption_key=os.getenv("ENCRYPTION_KEY", ""),
         response_text=os.getenv(
             "RESPONSE_TEXT",
-            "Добрый день! Готов выполнить ваш заказ."
+            "Я"
         ),
     )
 

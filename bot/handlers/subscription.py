@@ -58,7 +58,8 @@ async def subscription_menu(message: Message):
 
 @router.callback_query(F.data == "sub_buy")
 async def subscription_buy(callback: CallbackQuery):
-    await callback.answer("⏳ Создаю платёж...")
+    """Временно отключена оплата - сразу активируем подписку"""
+    await callback.answer("⏳ Активирую подписку...")
 
     async with async_session() as session:
         user = await UserCRUD.get_by_telegram_id(session, callback.from_user.id)
@@ -67,59 +68,24 @@ async def subscription_buy(callback: CallbackQuery):
             await callback.message.answer("Ошибка. Нажмите /start")
             return
 
-        payment_data = await YukassaPayment.create_payment(
-            amount=config.subscription.price,
-            user_id=user.id,
-            description=f"Подписка на {config.subscription.days} дней",
-        )
-
-        if not payment_data:
-            await callback.message.answer(
-                "❌ Ошибка при создании платежа.\n"
-                "Попробуйте позже или обратитесь в поддержку."
-            )
-            return
-
-        await PaymentCRUD.create_payment(
+        # Временно: сразу активируем подписку без оплаты
+        await UserCRUD.update_subscription(
             session,
-            user_id=user.id,
-            amount=config.subscription.price,
-            payment_id=payment_data["payment_id"],
+            user.id,
+            config.subscription.days,
         )
 
-        payment_manager.add_pending(user.id, payment_data["payment_id"])
-
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-        from aiogram.utils.keyboard import InlineKeyboardBuilder
-
-        builder = InlineKeyboardBuilder()
-        builder.row(
-            InlineKeyboardButton(
-                text="💳 Оплатить",
-                url=payment_data["confirmation_url"],
-            )
-        )
-        builder.row(
-            InlineKeyboardButton(
-                text="✅ Я оплатил",
-                callback_data=f"sub_check:{payment_data['payment_id']}",
-            )
-        )
-        builder.row(
-            InlineKeyboardButton(
-                text="❌ Отмена",
-                callback_data="sub_cancel",
-            )
-        )
-
-        await callback.message.answer(
-            f"💳 <b>Оплата подписки</b>\n\n"
-            f"Сумма: {config.subscription.price} руб.\n"
+        await callback.message.edit_text(
+            f"✅ <b>Подписка активирована!</b>\n\n"
             f"Срок: {config.subscription.days} дней\n\n"
-            f"Нажмите кнопку «Оплатить» для перехода на страницу оплаты.\n"
-            f"После оплаты нажмите «Я оплатил» для активации подписки.",
+            f"Теперь вы можете использовать все функции бота.",
             parse_mode="HTML",
-            reply_markup=builder.as_markup(),
+        )
+
+        user = await UserCRUD.get_by_telegram_id(session, callback.from_user.id)
+        await callback.message.answer(
+            "Главное меню:",
+            reply_markup=get_main_menu(user.monitoring_enabled),
         )
 
 

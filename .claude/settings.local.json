@@ -2,7 +2,22 @@
   "permissions": {
     "allow": [
       "Bash(tree:*)",
-      "Bash(du:*)"
+      "Bash(du:*)",
+      "Bash(docker-compose logs:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker exec -it taxi_parser_db psql -U postgres -c \"ALTER USER postgres WITH PASSWORD ''postgres'';\")",
+      "Bash(docker exec:*)",
+      "Bash(python3:*)",
+      "Bash(pip install:*)",
+      "Bash(for f in bot/*.py bot/**/*.py)",
+      "Bash(do python3 -m py_compile \"$f\")",
+      "Bash(echo:*)",
+      "Bash(done)",
+      "Bash(docker build:*)",
+      "Bash(docker run:*)",
+      "Bash(docker-compose:*)",
+      "Bash(docker stop:*)"
     ]
   }
 }

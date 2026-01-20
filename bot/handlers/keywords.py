@@ -12,12 +12,14 @@ from bot.keyboards.inline import (
     get_keyword_confirm_delete_all,
     get_keyword_confirm_reset,
 )
+from bot.utils.word_declension import generate_word_variations
 
 router = Router()
 
 
 class KeywordStates(StatesGroup):
     waiting_word = State()
+    waiting_bulk_words = State()
     confirm_delete = State()
 
 
@@ -102,23 +104,37 @@ async def keyword_add_process(message: Message, state: FSMContext):
             return
 
         existing = await KeywordCRUD.get_user_keywords(session, user.id)
-        if any(k.word.lower() == word for k in existing):
-            await message.answer(
-                "⚠️ Такое слово уже есть в списке.",
-                reply_markup=get_cancel_keyboard(),
-            )
-            return
+        existing_words = {k.word.lower() for k in existing}
 
-        await KeywordCRUD.add_keyword(session, user.id, word)
+        # Генерируем склонения
+        variations = generate_word_variations(word)
+        added_words = []
+
+        for var in variations:
+            if var.lower() not in existing_words:
+                await KeywordCRUD.add_keyword(session, user.id, var)
+                added_words.append(var)
+                existing_words.add(var.lower())
 
         await state.clear()
 
         keywords = await KeywordCRUD.get_user_keywords(session, user.id)
 
-        await message.answer(
-            f"✅ Слово «{word}» добавлено!",
-            reply_markup=get_main_menu(user.monitoring_enabled),
-        )
+        if added_words:
+            sample = added_words[:5]
+            sample_text = ", ".join(sample)
+            if len(added_words) > 5:
+                sample_text += f" и ещё {len(added_words) - 5}"
+            await message.answer(
+                f"✅ Добавлено {len(added_words)} вариаций слова «{word}»!\n\n"
+                f"Примеры: {sample_text}",
+                reply_markup=get_main_menu(user.monitoring_enabled),
+            )
+        else:
+            await message.answer(
+                f"⚠️ Слово «{word}» и его вариации уже есть в списке.",
+                reply_markup=get_main_menu(user.monitoring_enabled),
+            )
         await message.answer(
             "🔤 <b>Ключевые слова</b>",
             parse_mode="HTML",
@@ -126,10 +142,30 @@ async def keyword_add_process(message: Message, state: FSMContext):
         )
 
 
+@router.callback_query(F.data.startswith("kw_page:"))
+async def keyword_page(callback: CallbackQuery):
+    page = int(callback.data.split(":")[1])
+
+    async with async_session() as session:
+        user = await UserCRUD.get_by_telegram_id(session, callback.from_user.id)
+        if not user:
+            await callback.answer("Ошибка")
+            return
+
+        keywords = await KeywordCRUD.get_user_keywords(session, user.id)
+
+        await callback.message.edit_reply_markup(
+            reply_markup=get_keywords_keyboard(keywords, page=page),
+        )
+        await callback.answer()
+
+
 @router.callback_query(F.data.startswith("kw_delete:"))
 async def keyword_delete(callback: CallbackQuery, state: FSMContext):
-    keyword_id = int(callback.data.split(":")[1])
-    await state.update_data(delete_keyword_id=keyword_id)
+    parts = callback.data.split(":")
+    keyword_id = int(parts[1])
+    current_page = int(parts[2]) if len(parts) > 2 else 0
+    await state.update_data(delete_keyword_id=keyword_id, kw_page=current_page)
 
     await callback.message.edit_text(
         "⚠️ Удалить это ключевое слово?",
@@ -141,6 +177,7 @@ async def keyword_delete(callback: CallbackQuery, state: FSMContext):
 async def keyword_confirm_delete(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     keyword_id = data.get("delete_keyword_id")
+    current_page = data.get("kw_page", 0)
 
     if not keyword_id:
         await callback.answer("Ошибка")
@@ -158,7 +195,7 @@ async def keyword_confirm_delete(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "🔤 <b>Ключевые слова</b>",
         parse_mode="HTML",
-        reply_markup=get_keywords_keyboard(keywords),
+        reply_markup=get_keywords_keyboard(keywords, page=current_page),
     )
 
 
@@ -248,3 +285,113 @@ async def keyword_cancel(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("kw_info:"))
 async def keyword_info(callback: CallbackQuery):
     await callback.answer("Нажмите 🗑 для удаления")
+
+
+# === МАССОВОЕ ДОБАВЛЕНИЕ ===
+
+@router.callback_query(F.data == "kw_bulk_add")
+async def keyword_bulk_add(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(KeywordStates.waiting_bulk_words)
+    await callback.message.answer(
+        "📝 <b>Массовое добавление ключевых слов</b>\n\n"
+        "Введите ключевые слова (каждое с новой строки или через запятую).\n"
+        "Для каждого слова автоматически добавятся его склонения.\n\n"
+        "Пример:\n"
+        "<code>заказ\n"
+        "трансфер\n"
+        "нужен водитель</code>",
+        parse_mode="HTML",
+        reply_markup=get_cancel_keyboard(),
+    )
+
+
+@router.message(KeywordStates.waiting_bulk_words)
+async def keyword_bulk_add_process(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        async with async_session() as session:
+            user = await UserCRUD.get_by_telegram_id(session, message.from_user.id)
+            keywords = await KeywordCRUD.get_user_keywords(session, user.id)
+            await message.answer(
+                "Отменено.",
+                reply_markup=get_main_menu(user.monitoring_enabled if user else False),
+            )
+            await message.answer(
+                "🔤 <b>Ключевые слова</b>",
+                parse_mode="HTML",
+                reply_markup=get_keywords_keyboard(keywords),
+            )
+        return
+
+    # Парсим слова - разделитель: запятая или новая строка
+    text = message.text.strip()
+    words = []
+    for line in text.replace(",", "\n").split("\n"):
+        word = line.strip().lower()
+        if word and len(word) >= 2:
+            words.append(word)
+
+    if not words:
+        await message.answer(
+            "❌ Не удалось распознать ключевые слова. Минимум 2 символа.\n"
+            "Попробуйте ещё раз.",
+            reply_markup=get_cancel_keyboard(),
+        )
+        return
+
+    async with async_session() as session:
+        user = await UserCRUD.get_by_telegram_id(session, message.from_user.id)
+        if not user:
+            await message.answer("Ошибка. Нажмите /start")
+            await state.clear()
+            return
+
+        existing = await KeywordCRUD.get_user_keywords(session, user.id)
+        existing_words = {k.word.lower() for k in existing}
+
+        total_added = 0
+        added_base_words = []
+
+        for word in words:
+            # Генерируем склонения для каждого слова
+            variations = generate_word_variations(word)
+            word_added = 0
+
+            for var in variations:
+                if var.lower() not in existing_words:
+                    await KeywordCRUD.add_keyword(session, user.id, var)
+                    existing_words.add(var.lower())
+                    word_added += 1
+
+            if word_added > 0:
+                added_base_words.append(f"{word} (+{word_added})")
+                total_added += word_added
+
+        await state.clear()
+
+        keywords = await KeywordCRUD.get_user_keywords(session, user.id)
+
+        if total_added > 0:
+            sample = added_base_words[:10]
+            sample_text = "\n".join([f"• {w}" for w in sample])
+            if len(added_base_words) > 10:
+                sample_text += f"\n... и ещё {len(added_base_words) - 10} слов"
+
+            await message.answer(
+                f"✅ <b>Добавлено {total_added} вариаций!</b>\n\n"
+                f"Базовые слова и кол-во вариаций:\n{sample_text}",
+                parse_mode="HTML",
+                reply_markup=get_main_menu(user.monitoring_enabled),
+            )
+        else:
+            await message.answer(
+                "⚠️ Все указанные слова уже есть в списке.",
+                reply_markup=get_main_menu(user.monitoring_enabled),
+            )
+
+        await message.answer(
+            "🔤 <b>Ключевые слова</b>",
+            parse_mode="HTML",
+            reply_markup=get_keywords_keyboard(keywords),
+        )

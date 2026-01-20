@@ -5,14 +5,27 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.database.models import Keyword, City
 
 
-def get_keywords_keyboard(keywords: List[Keyword]) -> InlineKeyboardMarkup:
+KEYWORDS_PER_PAGE = 10
+
+
+def get_keywords_keyboard(
+    keywords: List[Keyword],
+    page: int = 0,
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     sorted_keywords = sorted(keywords, key=lambda k: (not k.is_default, k.word.lower()))
 
-    for kw in sorted_keywords[:15]:
+    total_pages = max(1, (len(sorted_keywords) + KEYWORDS_PER_PAGE - 1) // KEYWORDS_PER_PAGE)
+    page = min(page, total_pages - 1)
+    start_idx = page * KEYWORDS_PER_PAGE
+    end_idx = start_idx + KEYWORDS_PER_PAGE
+    page_keywords = sorted_keywords[start_idx:end_idx]
+
+    for kw in page_keywords:
         prefix = "📌" if kw.is_default else "📝"
-        text = f"{prefix} {kw.word}"
+        word_display = kw.word[:25] + "..." if len(kw.word) > 25 else kw.word
+        text = f"{prefix} {word_display}"
         builder.row(
             InlineKeyboardButton(
                 text=text,
@@ -20,20 +33,33 @@ def get_keywords_keyboard(keywords: List[Keyword]) -> InlineKeyboardMarkup:
             ),
             InlineKeyboardButton(
                 text="🗑",
-                callback_data=f"kw_delete:{kw.id}",
+                callback_data=f"kw_delete:{kw.id}:{page}",
             ),
         )
 
-    if len(keywords) > 15:
-        builder.row(
-            InlineKeyboardButton(
-                text=f"... ещё {len(keywords) - 15} слов",
-                callback_data="kw_show_all",
-            )
+    # Навигация по страницам
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(
+            InlineKeyboardButton(text="◀️", callback_data=f"kw_page:{page-1}")
         )
+
+    if total_pages > 1:
+        nav_buttons.append(
+            InlineKeyboardButton(text=f"{page+1}/{total_pages}", callback_data="noop")
+        )
+
+    if page < total_pages - 1:
+        nav_buttons.append(
+            InlineKeyboardButton(text="▶️", callback_data=f"kw_page:{page+1}")
+        )
+
+    if nav_buttons:
+        builder.row(*nav_buttons)
 
     builder.row(
         InlineKeyboardButton(text="➕ Добавить слово", callback_data="kw_add"),
+        InlineKeyboardButton(text="📝 Добавить списком", callback_data="kw_bulk_add"),
     )
     builder.row(
         InlineKeyboardButton(text="🔄 Сбросить к стандартным", callback_data="kw_reset"),
@@ -143,21 +169,49 @@ def get_subscription_keyboard(has_subscription: bool = False) -> InlineKeyboardM
     return builder.as_markup()
 
 
-def get_order_keyboard(order_id: int) -> InlineKeyboardMarkup:
+def _get_message_url(group_id: int, message_id: int) -> str:
+    """Формирует URL для перехода к сообщению в группе"""
+    group_id_str = str(group_id)
+
+    # Убираем минус если есть
+    if group_id_str.startswith("-"):
+        group_id_str = group_id_str[1:]
+
+    # Убираем префикс 100 если есть (supergroup)
+    if group_id_str.startswith("100"):
+        group_id_str = group_id_str[3:]
+
+    return f"https://t.me/c/{group_id_str}/{message_id}"
+
+
+def get_order_keyboard(order_id: int, group_id: int, message_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура заказа: взять заказ + перейти к сообщению"""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text="📩 Откликнуться",
-            callback_data=f"order_respond:{order_id}",
-        )
+            text="✅ Взять заказ",
+            callback_data=f"order_take:{order_id}",
+        ),
+        InlineKeyboardButton(
+            text="👁 Перейти в группу",
+            url=_get_message_url(group_id, message_id),
+        ),
     )
     return builder.as_markup()
 
 
-def get_order_responded_keyboard() -> InlineKeyboardMarkup:
+def get_order_taken_keyboard(group_id: int, message_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура после взятия заказа"""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="✅ Вы откликнулись", callback_data="noop")
+        InlineKeyboardButton(
+            text="✅ Заказ взят",
+            callback_data="noop"
+        ),
+        InlineKeyboardButton(
+            text="👁 Перейти в группу",
+            url=_get_message_url(group_id, message_id),
+        ),
     )
     return builder.as_markup()
 

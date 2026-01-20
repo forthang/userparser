@@ -8,7 +8,7 @@ from bot.database.connection import async_session
 from bot.database.crud import UserCRUD
 from bot.keyboards.main_menu import (
     get_main_menu, get_auth_keyboard, get_cancel_keyboard,
-    get_code_keyboard, get_2fa_keyboard, get_letters_keyboard, get_symbols_keyboard
+    get_code_keyboard
 )
 from bot.services.userbot import UserBotService
 from bot.config import config
@@ -20,6 +20,10 @@ class AuthStates(StatesGroup):
     waiting_phone = State()
     waiting_code = State()
     waiting_2fa = State()
+
+
+class SettingsStates(StatesGroup):
+    waiting_response_text = State()
 
 
 @router.message(Command("start"))
@@ -34,6 +38,15 @@ async def cmd_start(message: Message, state: FSMContext):
             telegram_id=message.from_user.id,
             username=message.from_user.username,
         )
+
+        # Проверка бана
+        if user.is_banned:
+            await message.answer(
+                "🚫 <b>Ваш аккаунт заблокирован.</b>\n\n"
+                "Если вы считаете, что это ошибка, обратитесь к администратору.",
+                parse_mode="HTML",
+            )
+            return
 
         if user.session_string:
             text = (
@@ -190,11 +203,9 @@ async def code_submit_handler(callback: CallbackQuery, state: FSMContext):
 
         if result.get("need_2fa"):
             await state.set_state(AuthStates.waiting_2fa)
-            await state.update_data(password="")
             await callback.message.edit_text(
-                "🔐 У вас включена двухфакторная аутентификация.\n"
-                "Введите ваш облачный пароль с помощью клавиатуры:",
-                reply_markup=get_2fa_keyboard(""),
+                "🔐 У вас включена двухфакторная аутентификация.\n\n"
+                "Введите ваш облачный пароль текстом:"
             )
             return
 
@@ -260,191 +271,55 @@ async def code_cancel_handler(callback: CallbackQuery, state: FSMContext):
     )
 
 
-# === Обработчики инлайн клавиатуры для 2FA пароля ===
+# === Обработчик текстового ввода 2FA пароля ===
 
-@router.callback_query(F.data == "2fa_display")
-async def twofa_display_handler(callback: CallbackQuery):
-    await callback.answer()
-
-
-@router.callback_query(F.data.regexp(r"^2fa_[0-9]$"))
-async def twofa_digit_handler(callback: CallbackQuery, state: FSMContext):
-    """Обработка нажатия цифры в 2FA"""
-    digit = callback.data.replace("2fa_", "")
-
-    data = await state.get_data()
-    current_password = data.get("password", "")
-    current_password += digit
-    await state.update_data(password=current_password)
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_2fa_keyboard(current_password)
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "2fa_backspace")
-async def twofa_backspace_handler(callback: CallbackQuery, state: FSMContext):
-    """Удаление последнего символа"""
-    data = await state.get_data()
-    current_password = data.get("password", "")
-
-    if current_password:
-        current_password = current_password[:-1]
-        await state.update_data(password=current_password)
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_2fa_keyboard(current_password)
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "2fa_letters")
-async def twofa_letters_handler(callback: CallbackQuery):
-    """Показать клавиатуру с маленькими буквами"""
-    await callback.message.edit_reply_markup(
-        reply_markup=get_letters_keyboard(uppercase=False)
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "2fa_LETTERS")
-async def twofa_upper_letters_handler(callback: CallbackQuery):
-    """Показать клавиатуру с большими буквами"""
-    await callback.message.edit_reply_markup(
-        reply_markup=get_letters_keyboard(uppercase=True)
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "2fa_symbols")
-async def twofa_symbols_handler(callback: CallbackQuery):
-    """Показать клавиатуру с символами"""
-    await callback.message.edit_reply_markup(
-        reply_markup=get_symbols_keyboard()
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("2fa_lower_"))
-async def twofa_lower_letter_handler(callback: CallbackQuery, state: FSMContext):
-    """Добавить маленькую букву"""
-    letter = callback.data.replace("2fa_lower_", "")
-
-    data = await state.get_data()
-    current_password = data.get("password", "")
-    current_password += letter
-    await state.update_data(password=current_password)
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_2fa_keyboard(current_password)
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("2fa_upper_"))
-async def twofa_upper_letter_handler(callback: CallbackQuery, state: FSMContext):
-    """Добавить большую букву"""
-    letter = callback.data.replace("2fa_upper_", "")
-
-    data = await state.get_data()
-    current_password = data.get("password", "")
-    current_password += letter
-    await state.update_data(password=current_password)
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_2fa_keyboard(current_password)
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("2fa_sym_"))
-async def twofa_symbol_handler(callback: CallbackQuery, state: FSMContext):
-    """Добавить символ"""
-    symbol = callback.data.replace("2fa_sym_", "")
-
-    data = await state.get_data()
-    current_password = data.get("password", "")
-    current_password += symbol
-    await state.update_data(password=current_password)
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_2fa_keyboard(current_password)
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "2fa_back_to_main")
-async def twofa_back_handler(callback: CallbackQuery, state: FSMContext):
-    """Вернуться к основной клавиатуре 2FA"""
-    data = await state.get_data()
-    current_password = data.get("password", "")
-
-    await callback.message.edit_reply_markup(
-        reply_markup=get_2fa_keyboard(current_password)
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "2fa_submit")
-async def twofa_submit_handler(callback: CallbackQuery, state: FSMContext):
-    """Отправка 2FA пароля"""
-    data = await state.get_data()
-    password = data.get("password", "")
-    phone = data.get("phone")
-
-    if not password:
-        await callback.answer("Введите пароль", show_alert=True)
+@router.message(AuthStates.waiting_2fa)
+async def process_2fa_password(message: Message, state: FSMContext):
+    """Обработка текстового ввода 2FA пароля"""
+    if message.text == "❌ Отмена":
+        await state.clear()
+        UserBotService.cleanup_auth(message.from_user.id)
+        await message.answer(
+            "Авторизация отменена.",
+            reply_markup=get_auth_keyboard(),
+        )
         return
 
-    await callback.answer("Проверяю пароль...")
+    password = message.text.strip()
+    data = await state.get_data()
+    phone = data.get("phone")
+
+    status_msg = await message.answer("⏳ Проверяю пароль...")
 
     try:
-        await callback.message.edit_text("⏳ Проверяю пароль...")
-
         session_string = await UserBotService.check_password(
-            user_id=callback.from_user.id,
+            user_id=message.from_user.id,
             password=password,
         )
 
         async with async_session() as session:
-            user = await UserCRUD.get_by_telegram_id(session, callback.from_user.id)
+            user = await UserCRUD.get_by_telegram_id(session, message.from_user.id)
             if user:
                 await UserCRUD.update_session(session, user.id, session_string, phone)
 
         await state.clear()
-        await callback.message.edit_text(
+        await status_msg.edit_text(
             "✅ Авторизация успешна!\n\n"
             "Теперь вы можете настроить бота и запустить мониторинг."
         )
 
         async with async_session() as session:
-            user = await UserCRUD.get_by_telegram_id(session, callback.from_user.id)
-            await callback.message.answer(
+            user = await UserCRUD.get_by_telegram_id(session, message.from_user.id)
+            await message.answer(
                 "Главное меню:",
                 reply_markup=get_main_menu(user.monitoring_enabled if user else False),
             )
 
     except Exception as e:
-        await state.update_data(password="")
-        await callback.message.edit_text(
-            f"❌ Неверный пароль или ошибка: {str(e)}\n"
-            "Попробуйте ещё раз.",
-            reply_markup=get_2fa_keyboard(""),
+        await status_msg.edit_text(
+            f"❌ Неверный пароль или ошибка: {str(e)}\n\n"
+            "Введите пароль ещё раз или отправьте «❌ Отмена» для отмены."
         )
-
-
-@router.callback_query(F.data == "2fa_cancel")
-async def twofa_cancel_handler(callback: CallbackQuery, state: FSMContext):
-    """Отмена 2FA"""
-    await callback.answer()
-    await state.clear()
-    UserBotService.cleanup_auth(callback.from_user.id)
-
-    await callback.message.edit_text(
-        "Авторизация отменена.",
-        reply_markup=get_auth_keyboard(),
-    )
 
 
 @router.callback_query(F.data == "back_main")
@@ -492,12 +367,75 @@ async def settings_handler(message: Message):
             await message.answer("Ошибка. Нажмите /start")
             return
 
+        response_text = user.response_text or "Я"
+
         text = (
             "⚙️ <b>Настройки</b>\n\n"
             f"📱 Телефон: {user.phone or 'Не указан'}\n"
             f"🔗 Аккаунт: {'Подключен ✅' if user.session_string else 'Не подключен ❌'}\n"
             f"📅 Подписка до: {user.subscription_end.strftime('%d.%m.%Y') if user.subscription_end else 'Не активна'}\n"
-            f"🔔 Мониторинг: {'Включен ✅' if user.monitoring_enabled else 'Выключен ❌'}\n"
+            f"🔔 Мониторинг: {'Включен ✅' if user.monitoring_enabled else 'Выключен ❌'}\n\n"
+            f"💬 <b>Текст отклика:</b>\n"
+            f"<i>{response_text}</i>"
         )
 
-        await message.answer(text, parse_mode="HTML")
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(text="✏️ Изменить текст отклика", callback_data="settings_edit_response")
+        )
+        builder.row(
+            InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")
+        )
+
+        await message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data == "settings_edit_response")
+async def settings_edit_response(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(SettingsStates.waiting_response_text)
+
+    async with async_session() as session:
+        user = await UserCRUD.get_by_telegram_id(session, callback.from_user.id)
+        current_text = user.response_text or "Я" if user else ""
+
+    await callback.message.answer(
+        f"✏️ <b>Редактирование текста отклика</b>\n\n"
+        f"Текущий текст:\n<i>{current_text}</i>\n\n"
+        f"Отправьте новый текст, который будет отправляться при взятии заказа.\n\n"
+        f"Или отправьте /cancel для отмены.",
+        parse_mode="HTML",
+    )
+
+
+@router.message(SettingsStates.waiting_response_text)
+async def process_response_text(message: Message, state: FSMContext):
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.")
+        return
+
+    new_text = message.text.strip()
+
+    if len(new_text) > 1000:
+        await message.answer(
+            "❌ Текст слишком длинный. Максимум 1000 символов.\n"
+            "Отправьте текст покороче или /cancel для отмены."
+        )
+        return
+
+    async with async_session() as session:
+        user = await UserCRUD.get_by_telegram_id(session, message.from_user.id)
+        if user:
+            await UserCRUD.update_response_text(session, user.id, new_text)
+
+    await state.clear()
+    await message.answer(
+        f"✅ Текст отклика обновлён!\n\n"
+        f"Новый текст:\n<i>{new_text}</i>",
+        parse_mode="HTML",
+        reply_markup=get_main_menu(False),
+    )

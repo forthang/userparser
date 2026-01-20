@@ -21,7 +21,6 @@ def get_main_menu(monitoring_enabled: bool = False) -> ReplyKeyboardMarkup:
         KeyboardButton(text=MainMenuText.KEYWORDS),
     )
     builder.row(
-        KeyboardButton(text=MainMenuText.CITIES),
         KeyboardButton(text=MainMenuText.SUBSCRIPTION),
     )
 

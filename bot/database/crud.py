@@ -84,6 +84,16 @@ class UserCRUD:
         await session.commit()
 
     @staticmethod
+    async def update_response_text(
+        session: AsyncSession,
+        user_id: int,
+        response_text: str,
+    ) -> None:
+        stmt = update(User).where(User.id == user_id).values(response_text=response_text)
+        await session.execute(stmt)
+        await session.commit()
+
+    @staticmethod
     async def get_active_users_with_monitoring(session: AsyncSession) -> List[User]:
         result = await session.execute(
             select(User).where(
@@ -138,6 +148,53 @@ class UserCRUD:
         await session.execute(delete(City).where(City.user_id == user_id))
         await session.execute(delete(User).where(User.id == user_id))
         await session.commit()
+
+    @staticmethod
+    async def set_banned(session: AsyncSession, user_id: int, is_banned: bool) -> None:
+        stmt = update(User).where(User.id == user_id).values(is_banned=is_banned)
+        await session.execute(stmt)
+        await session.commit()
+
+    @staticmethod
+    async def set_admin(session: AsyncSession, user_id: int, is_admin: bool) -> None:
+        stmt = update(User).where(User.id == user_id).values(is_admin=is_admin)
+        await session.execute(stmt)
+        await session.commit()
+
+    @staticmethod
+    async def get_all_users(session: AsyncSession) -> List[User]:
+        result = await session.execute(
+            select(User).where(User.is_active == True)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_all_admins(session: AsyncSession) -> List[User]:
+        result = await session.execute(
+            select(User).where(User.is_admin == True)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def search_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> Optional[User]:
+        result = await session.execute(
+            select(User).where(User.telegram_id == telegram_id)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_users_count(session: AsyncSession) -> dict:
+        """Возвращает статистику по пользователям"""
+        all_users = await session.execute(select(User))
+        users = list(all_users.scalars().all())
+
+        return {
+            "total": len(users),
+            "active": len([u for u in users if u.is_active]),
+            "with_subscription": len([u for u in users if u.is_subscription_active]),
+            "banned": len([u for u in users if u.is_banned]),
+            "admins": len([u for u in users if u.is_admin]),
+        }
 
 
 class GroupCRUD:

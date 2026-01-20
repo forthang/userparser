@@ -203,17 +203,45 @@ class UserBotService:
         try:
             await client.start()
 
-            await client.send_message(
-                chat_id=chat_id,
-                text=text,
-                reply_to_message_id=message_id,
-            )
+            # Пробуем разные варианты ID
+            chat_ids_to_try = [chat_id]
+
+            chat_id_str = str(chat_id)
+            # Если ID не начинается с -100, добавляем вариант с -100
+            if chat_id_str.startswith("-") and not chat_id_str.startswith("-100"):
+                chat_ids_to_try.append(int("-100" + chat_id_str[1:]))
+            # Если ID начинается с -100, добавляем вариант без 100
+            elif chat_id_str.startswith("-100"):
+                chat_ids_to_try.append(int("-" + chat_id_str[4:]))
+
+            last_error = None
+            for try_chat_id in chat_ids_to_try:
+                try:
+                    # Сначала пробуем получить чат, чтобы Pyrogram знал о нём
+                    try:
+                        await client.get_chat(try_chat_id)
+                    except Exception:
+                        pass  # Игнорируем ошибку получения чата
+
+                    await client.send_message(
+                        chat_id=try_chat_id,
+                        text=text,
+                        reply_to_message_id=message_id,
+                    )
+                    logger.info(f"Successfully sent reply to chat {try_chat_id}")
+                    await client.stop()
+                    return True
+
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"Failed to send to {try_chat_id}: {e}")
+                    continue
 
             await client.stop()
-            return True
+            raise last_error or Exception("Failed to send message")
 
         except Exception as e:
-            logger.error(f"Error sending reply: {e}")
+            logger.error(f"Error sending reply to chat {chat_id}: {e}")
             try:
                 await client.stop()
             except:

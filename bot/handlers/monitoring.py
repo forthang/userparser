@@ -5,16 +5,26 @@ from aiogram.types import Message, CallbackQuery
 from bot.database.connection import async_session
 from bot.database.crud import UserCRUD, GroupCRUD, KeywordCRUD, CityCRUD, OrderCRUD
 from bot.keyboards.main_menu import MainMenuText, get_main_menu
-from bot.keyboards.inline import get_order_keyboard, get_order_responded_keyboard
+from bot.keyboards.inline import get_order_keyboard, get_order_taken_keyboard
 from bot.services.userbot import UserBotService, UserBotManager
 from bot.services.parser import MessageParser
 from bot.config import config
+from userbot.client import userbot_pool
 
 logger = logging.getLogger(__name__)
 
 router = Router()
 
 active_monitors = {}
+
+# Глобальная ссылка на бот для callback
+_bot_instance: Bot = None
+
+
+def set_bot_instance(bot: Bot):
+    """Установить инстанс бота для использования в callback"""
+    global _bot_instance
+    _bot_instance = bot
 
 
 @router.message(F.text == MainMenuText.MONITORING_ON)
@@ -58,6 +68,41 @@ async def monitoring_start(message: Message):
 
         await UserCRUD.toggle_monitoring(session, user.id, True)
 
+        # Запускаем userbot клиент для мониторинга
+        if _bot_instance and not userbot_pool.is_running(user.id):
+            async def message_callback(
+                user_tg_id: int,
+                group_id: int,
+                group_name: str,
+                msg_id: int,
+                msg_text: str,
+            ):
+                await process_group_message(
+                    bot=_bot_instance,
+                    user_telegram_id=user_tg_id,
+                    group_id=group_id,
+                    group_name=group_name,
+                    message_id=msg_id,
+                    message_text=msg_text,
+                )
+
+            success = await userbot_pool.start_client(
+                user_db_id=user.id,
+                user_telegram_id=user.telegram_id,
+                session_string=user.session_string,
+                on_message_callback=message_callback,
+            )
+
+            if not success:
+                await UserCRUD.toggle_monitoring(session, user.id, False)
+                await message.answer(
+                    "❌ Не удалось запустить мониторинг.\n"
+                    "Попробуйте переавторизоваться или обратитесь в поддержку."
+                )
+                return
+
+            logger.info(f"Started userbot for user {user.telegram_id} via monitoring button")
+
         await message.answer(
             f"✅ <b>Мониторинг запущен!</b>\n\n"
             f"📋 Отслеживаемых групп: {len(enabled_groups)}\n"
@@ -82,7 +127,9 @@ async def monitoring_stop(message: Message):
         if user.id in active_monitors:
             del active_monitors[user.id]
 
-        await UserBotManager.stop_client(user.id)
+        # Останавливаем userbot клиент
+        await userbot_pool.stop_client(user.id)
+        logger.info(f"Stopped userbot for user {user.telegram_id}")
 
         await message.answer(
             "⏹ <b>Мониторинг остановлен</b>\n\n"
@@ -114,8 +161,9 @@ async def monitoring_stop_callback(callback: CallbackQuery):
     await monitoring_stop(fake_message)
 
 
-@router.callback_query(F.data.startswith("order_respond:"))
-async def order_respond(callback: CallbackQuery):
+@router.callback_query(F.data.startswith("order_take:"))
+async def order_take(callback: CallbackQuery):
+    """Обработка взятия заказа - отправляет ответ в группу и перекидывает туда пользователя"""
     order_id = int(callback.data.split(":")[1])
 
     async with async_session() as session:
@@ -132,34 +180,51 @@ async def order_respond(callback: CallbackQuery):
             return
 
         if order.responded:
-            await callback.answer("Вы уже откликнулись на этот заказ", show_alert=True)
+            await callback.answer("Вы уже взяли этот заказ", show_alert=True)
             return
 
         await callback.answer("⏳ Отправляю отклик...")
 
         try:
-            userbot = UserBotService(
-                api_id=config.telegram_api.api_id,
-                api_hash=config.telegram_api.api_hash,
-                session_string=user.session_string,
-            )
+            # Получаем текст отклика пользователя или дефолтный
+            response_text = user.response_text or config.response_text
 
-            await userbot.send_reply(
-                chat_id=order.telegram_group_id,
-                message_id=order.message_id,
-                text=config.response_text,
-            )
+            # Используем работающий клиент из пула если есть
+            if userbot_pool.is_running(user.id):
+                client = userbot_pool._clients[user.id].client
+                await client.send_message(
+                    chat_id=order.telegram_group_id,
+                    text=response_text,
+                    reply_to_message_id=order.message_id,
+                )
+                logger.info(f"Sent reply via pool client to {order.telegram_group_id}")
+            else:
+                # Если клиент не запущен, создаём временный
+                userbot = UserBotService(
+                    api_id=config.telegram_api.api_id,
+                    api_hash=config.telegram_api.api_hash,
+                    session_string=user.session_string,
+                )
+                await userbot.send_reply(
+                    chat_id=order.telegram_group_id,
+                    message_id=order.message_id,
+                    text=response_text,
+                )
 
             await OrderCRUD.mark_responded(session, order_id)
 
+            # Обновляем клавиатуру - теперь показываем что заказ взят
             await callback.message.edit_reply_markup(
-                reply_markup=get_order_responded_keyboard(),
+                reply_markup=get_order_taken_keyboard(order.telegram_group_id, order.message_id),
             )
 
-            await callback.message.answer("✅ Вы успешно откликнулись на заказ!")
+            await callback.message.answer(
+                "✅ Отклик отправлен!\n\n"
+                "Нажмите кнопку «Перейти в группу» чтобы продолжить общение."
+            )
 
         except Exception as e:
-            logger.error(f"Error responding to order: {e}")
+            logger.error(f"Error taking order: {e}")
             await callback.message.answer(
                 f"❌ Ошибка при отправке отклика: {str(e)}\n"
                 "Попробуйте ещё раз или напишите вручную."
@@ -224,7 +289,7 @@ async def process_group_message(
                 chat_id=user_telegram_id,
                 text=notification,
                 parse_mode="HTML",
-                reply_markup=get_order_keyboard(order.id),
+                reply_markup=get_order_keyboard(order.id, group_id, message_id),
             )
         except Exception as e:
             logger.error(f"Error sending notification to user {user_telegram_id}: {e}")
