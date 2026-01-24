@@ -1,12 +1,12 @@
 import logging
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message as AiogramMessage, CallbackQuery
 
 from bot.database.connection import async_session
-from bot.database.crud import UserCRUD, GroupCRUD, KeywordCRUD, CityCRUD, OrderCRUD
+from bot.database.crud import UserCRUD, GroupCRUD, KeywordCRUD, CityCRUD, OrderCRUD, BlacklistedGroupCRUD
 from bot.keyboards.main_menu import MainMenuText, get_main_menu
 from bot.keyboards.inline import get_order_keyboard, get_order_taken_keyboard
-from bot.services.userbot import UserBotService, UserBotManager
+from bot.services.userbot import UserBotService
 from bot.services.parser import MessageParser
 from bot.config import config
 from userbot.client import userbot_pool
@@ -28,7 +28,7 @@ def set_bot_instance(bot: Bot):
 
 
 @router.message(F.text == MainMenuText.MONITORING_ON)
-async def monitoring_start(message: Message):
+async def monitoring_start(message: AiogramMessage):
     async with async_session() as session:
         user = await UserCRUD.get_by_telegram_id(session, message.from_user.id)
 
@@ -76,6 +76,7 @@ async def monitoring_start(message: Message):
                 group_name: str,
                 msg_id: int,
                 msg_text: str,
+                pyrogram_message=None,
             ):
                 await process_group_message(
                     bot=_bot_instance,
@@ -94,10 +95,11 @@ async def monitoring_start(message: Message):
             )
 
             if not success:
+                logger.error(f"Failed to start userbot for user {user.telegram_id}")
                 await UserCRUD.toggle_monitoring(session, user.id, False)
                 await message.answer(
                     "❌ Не удалось запустить мониторинг.\n"
-                    "Попробуйте переавторизоваться или обратитесь в поддержку."
+                    "Попробуйте позже или переавторизуйтесь."
                 )
                 return
 
@@ -114,7 +116,7 @@ async def monitoring_start(message: Message):
 
 
 @router.message(F.text == MainMenuText.MONITORING_OFF)
-async def monitoring_stop(message: Message):
+async def monitoring_stop(message: AiogramMessage):
     async with async_session() as session:
         user = await UserCRUD.get_by_telegram_id(session, message.from_user.id)
 
@@ -213,22 +215,21 @@ async def order_take(callback: CallbackQuery):
 
             await OrderCRUD.mark_responded(session, order_id)
 
-            # Обновляем клавиатуру - теперь показываем что заказ взят
+            # Обновляем клавиатуру - теперь показываем что заказ взят + кнопка перехода
             await callback.message.edit_reply_markup(
-                reply_markup=get_order_taken_keyboard(order.telegram_group_id, order.message_id),
+                reply_markup=get_order_taken_keyboard(
+                    group_id=order.telegram_group_id,
+                    message_id=order.message_id
+                ),
             )
 
             await callback.message.answer(
-                "✅ Отклик отправлен!\n\n"
-                "Нажмите кнопку «Перейти в группу» чтобы продолжить общение."
+                "✅ Отклик отправлен!"
             )
 
         except Exception as e:
-            logger.error(f"Error taking order: {e}")
-            await callback.message.answer(
-                f"❌ Ошибка при отправке отклика: {str(e)}\n"
-                "Попробуйте ещё раз или напишите вручную."
-            )
+            logger.error(f"Error taking order {order_id} for user {user.telegram_id}: {e}")
+            await callback.answer("Не удалось отправить отклик. Попробуйте вручную.", show_alert=True)
 
 
 @router.callback_query(F.data == "noop")
@@ -251,6 +252,11 @@ async def process_group_message(
             return
 
         if not user.is_subscription_active:
+            return
+
+        # Проверяем черный список групп
+        if await BlacklistedGroupCRUD.is_blacklisted(session, group_id):
+            logger.debug(f"Group {group_id} is blacklisted, skipping")
             return
 
         keywords = await KeywordCRUD.get_user_keywords(session, user.id)
@@ -285,11 +291,21 @@ async def process_group_message(
         )
 
         try:
+            # Отправляем уведомление с текстом заказа и кнопками
+            notification_text = f"🔔 <b>Новый заказ!</b>\n\n"
+            notification_text += f"📍 Группа: {group_name}\n"
+            if found_keyword:
+                notification_text += f"🔤 Ключевое слово: {found_keyword}\n"
+            if found_city:
+                notification_text += f"🏙 Город: {found_city}\n"
+            notification_text += f"\n📝 <b>Текст:</b>\n{message_text[:800]}{'...' if len(message_text) > 800 else ''}"
+
             await bot.send_message(
                 chat_id=user_telegram_id,
-                text=notification,
+                text=notification_text,
                 parse_mode="HTML",
                 reply_markup=get_order_keyboard(order.id, group_id, message_id),
             )
+
         except Exception as e:
             logger.error(f"Error sending notification to user {user_telegram_id}: {e}")

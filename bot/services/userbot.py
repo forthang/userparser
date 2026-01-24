@@ -170,13 +170,39 @@ class UserBotService:
             await client.start()
 
             groups = []
+            seen_ids = set()  # Для дедупликации по ID
+            seen_names = {}   # Для дедупликации по названию (name -> id)
+
             async for dialog in client.get_dialogs():
                 chat: Chat = dialog.chat
 
                 if chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
+                    chat_id = chat.id
+                    chat_name = chat.title or "Без названия"
+
+                    # Пропускаем если уже видели этот ID
+                    if chat_id in seen_ids:
+                        continue
+
+                    # Если группа с таким названием уже есть - используем supergroup ID
+                    # (при миграции group -> supergroup, supergroup обычно имеет -100 префикс)
+                    if chat_name in seen_names:
+                        existing_id = seen_names[chat_name]
+                        # Предпочитаем supergroup (ID с -100)
+                        if str(chat_id).startswith("-100") and not str(existing_id).startswith("-100"):
+                            # Заменяем старую группу на supergroup
+                            groups = [g for g in groups if g["id"] != existing_id]
+                            seen_ids.discard(existing_id)
+                        else:
+                            # Оставляем существующую
+                            continue
+
+                    seen_ids.add(chat_id)
+                    seen_names[chat_name] = chat_id
+
                     groups.append({
-                        "id": chat.id,
-                        "name": chat.title or "Без названия",
+                        "id": chat_id,
+                        "name": chat_name,
                         "type": str(chat.type),
                         "members_count": getattr(chat, "members_count", None),
                     })
@@ -242,6 +268,55 @@ class UserBotService:
 
         except Exception as e:
             logger.error(f"Error sending reply to chat {chat_id}: {e}")
+            try:
+                await client.stop()
+            except:
+                pass
+            raise
+
+    async def forward_message(
+        self,
+        from_chat_id: int,
+        message_id: int,
+        to_chat_id: int,
+    ) -> bool:
+        """Пересылает сообщение пользователю"""
+        client = await self._get_client()
+
+        try:
+            await client.start()
+
+            # Пробуем разные варианты ID для from_chat_id
+            chat_ids_to_try = [from_chat_id]
+
+            chat_id_str = str(from_chat_id)
+            if chat_id_str.startswith("-") and not chat_id_str.startswith("-100"):
+                chat_ids_to_try.append(int("-100" + chat_id_str[1:]))
+            elif chat_id_str.startswith("-100"):
+                chat_ids_to_try.append(int("-" + chat_id_str[4:]))
+
+            last_error = None
+            for try_chat_id in chat_ids_to_try:
+                try:
+                    await client.forward_messages(
+                        chat_id=to_chat_id,
+                        from_chat_id=try_chat_id,
+                        message_ids=message_id,
+                    )
+                    logger.info(f"Successfully forwarded message from {try_chat_id} to {to_chat_id}")
+                    await client.stop()
+                    return True
+
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"Failed to forward from {try_chat_id}: {e}")
+                    continue
+
+            await client.stop()
+            raise last_error or Exception("Failed to forward message")
+
+        except Exception as e:
+            logger.error(f"Error forwarding message: {e}")
             try:
                 await client.stop()
             except:

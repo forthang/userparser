@@ -62,6 +62,7 @@ async def start_active_userbots(bot: Bot):
                     group_name: str,
                     message_id: int,
                     message_text: str,
+                    pyrogram_message=None,
                 ):
                     await process_group_message(
                         bot=bot,

@@ -1,3 +1,4 @@
+import re
 import logging
 from typing import List, Optional, Tuple
 from bot.database.models import Keyword, City
@@ -7,25 +8,39 @@ logger = logging.getLogger(__name__)
 
 
 class MessageParser:
+    """Парсер сообщений для поиска ключевых слов и городов"""
+
     def __init__(
         self,
         keywords: List[Keyword],
         cities: List[City],
     ):
+        self.original_keywords = [kw.word for kw in keywords]
         self.keywords = [kw.word.lower() for kw in keywords]
         self.cities = cities
 
+    def _find_keyword_match(self, text_lower: str) -> Optional[str]:
+        """
+        Поиск ключевого слова в тексте.
+        Ищет точное совпадение слова (как отдельного слова в тексте).
+        """
+        for i, keyword in enumerate(self.keywords):
+            # Поиск точного совпадения слова с границами
+            # \b - граница слова, re.IGNORECASE для игнорирования регистра
+            pattern = rf'\b{re.escape(keyword)}\b'
+            if re.search(pattern, text_lower):
+                return self.original_keywords[i]
+
+        return None
+
     def check_message(self, text: str) -> Tuple[bool, Optional[str], Optional[str]]:
+        """Проверяет сообщение на наличие ключевых слов и городов"""
         if not text:
             return False, None, None
 
         text_lower = text.lower()
 
-        found_keyword = None
-        for keyword in self.keywords:
-            if keyword in text_lower:
-                found_keyword = keyword
-                break
+        found_keyword = self._find_keyword_match(text_lower)
 
         if not found_keyword:
             return False, None, None
@@ -52,6 +67,7 @@ class MessageParser:
         keyword: Optional[str] = None,
         city: Optional[str] = None,
     ) -> str:
+        """Форматирует уведомление о найденном заказе"""
         notification = f"🔔 <b>Новый заказ!</b>\n\n"
         notification += f"📍 Группа: {group_name}\n"
 
@@ -76,6 +92,7 @@ def is_order_message(
     keywords: List[str],
     city_variations: List[str] = None,
 ) -> bool:
+    """Проверяет, является ли сообщение заказом"""
     if not text:
         return False
 
@@ -83,7 +100,10 @@ def is_order_message(
 
     keyword_found = False
     for keyword in keywords:
-        if keyword.lower() in text_lower:
+        keyword_lower = keyword.lower()
+        # Поиск точного совпадения слова с границами
+        pattern = rf'\b{re.escape(keyword_lower)}\b'
+        if re.search(pattern, text_lower):
             keyword_found = True
             break
 

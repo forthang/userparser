@@ -35,10 +35,11 @@ services:
       - POSTGRES_DB=${DB_NAME:-taxi_parser}
       - POSTGRES_USER=${DB_USER:-postgres}
       - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_HOST_AUTH_METHOD=trust
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+      - ./pgdata:/var/lib/postgresql/data
+      - ./backups:/backups
+      - ./scripts:/scripts
     networks:
       - bot_network
     healthcheck:
@@ -47,9 +48,30 @@ services:
       timeout: 5s
       retries: 5
 
+  backup:
+    image: postgres:15-alpine
+    container_name: taxi_parser_backup
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PGHOST=postgres
+      - PGUSER=postgres
+      - PGDATABASE=taxi_parser
+    volumes:
+      - ./backups:/backups
+    networks:
+      - bot_network
+    entrypoint: /bin/sh
+    command: >
+      -c 'while true; do
+        pg_dump -U postgres -h postgres -d taxi_parser > /backups/database.sql 2>/dev/null &&
+        echo "$$(date +%Y-%m-%d\ %H:%M:%S) - Backup completed" ||
+        echo "$$(date +%Y-%m-%d\ %H:%M:%S) - Backup failed";
+        sleep 86400;
+      done'
+
 networks:
   bot_network:
     driver: bridge
-
-volumes:
-  postgres_data:

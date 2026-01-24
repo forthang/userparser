@@ -1,9 +1,12 @@
+import logging
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery
 
 from bot.database.connection import async_session
+
+logger = logging.getLogger(__name__)
 from bot.database.crud import UserCRUD, GroupCRUD
 from bot.keyboards.main_menu import MainMenuText, get_cancel_keyboard, get_main_menu
 from bot.keyboards.groups_kb import get_groups_keyboard, get_groups_empty_keyboard
@@ -100,9 +103,10 @@ async def groups_refresh(callback: CallbackQuery, state: FSMContext):
             )
 
         except Exception as e:
+            logger.error(f"Error loading groups for user {user.telegram_id}: {e}")
             await callback.message.edit_text(
-                f"❌ Ошибка при загрузке групп: {str(e)}\n\n"
-                "Возможно, сессия истекла. Попробуйте авторизоваться заново.",
+                "❌ Не удалось загрузить группы.\n\n"
+                "Попробуйте позже или переавторизуйтесь.",
                 reply_markup=get_groups_empty_keyboard(),
             )
 

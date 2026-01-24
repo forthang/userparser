@@ -1,3 +1,4 @@
+import logging
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -5,7 +6,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery
 
 from bot.database.connection import async_session
-from bot.database.crud import UserCRUD
+
+logger = logging.getLogger(__name__)
+from bot.database.crud import UserCRUD, BotSettingsCRUD
 from bot.keyboards.main_menu import (
     get_main_menu, get_auth_keyboard, get_cancel_keyboard,
     get_code_keyboard
@@ -129,9 +132,10 @@ async def process_phone(message: Message, state: FSMContext):
         )
 
     except Exception as e:
+        logger.error(f"Error sending code to phone {phone}: {e}")
         await status_msg.edit_text(
-            f"❌ Ошибка при отправке кода: {str(e)}\n"
-            "Попробуйте ещё раз или обратитесь в поддержку."
+            "❌ Не удалось отправить код.\n"
+            "Проверьте номер телефона и попробуйте ещё раз."
         )
         await state.clear()
 
@@ -249,8 +253,9 @@ async def code_submit_handler(callback: CallbackQuery, state: FSMContext):
             UserBotService.cleanup_auth(callback.from_user.id)
             await state.clear()
         else:
+            logger.error(f"Auth error for user {callback.from_user.id}: {e}")
             await callback.message.edit_text(
-                f"❌ Ошибка авторизации: {str(e)}\n"
+                "❌ Ошибка авторизации.\n"
                 "Попробуйте ещё раз.",
                 reply_markup=get_auth_keyboard(),
             )
@@ -345,17 +350,9 @@ async def back_to_main(callback: CallbackQuery, state: FSMContext):
 
 @router.message(F.text == "❓ Помощь")
 async def help_handler(message: Message):
-    await message.answer(
-        "📚 <b>Справка по боту</b>\n\n"
-        "<b>📋 Список групп</b> - выберите группы, в которых бот будет искать заказы\n\n"
-        "<b>🔤 Ключевые слова</b> - слова, по которым бот определяет заказы "
-        "(заказ, трансфер, такси и т.д.)\n\n"
-        "<b>🏙 Города</b> - добавьте города, чтобы бот искал заказы только по ним\n\n"
-        "<b>▶️ Мониторинг</b> - включите/выключите отслеживание заказов\n\n"
-        "<b>💳 Подписка</b> - оформите или продлите подписку\n\n"
-        "❓ Остались вопросы? Напишите в поддержку.",
-        parse_mode="HTML",
-    )
+    async with async_session() as session:
+        help_text = await BotSettingsCRUD.get_help_text(session)
+    await message.answer(help_text, parse_mode="HTML")
 
 
 @router.message(F.text == "⚙️ Настройки")
@@ -386,6 +383,13 @@ async def settings_handler(message: Message):
         builder.row(
             InlineKeyboardButton(text="✏️ Изменить текст отклика", callback_data="settings_edit_response")
         )
+        if user.session_string:
+            builder.row(
+                InlineKeyboardButton(text="🔄 Переподключить аккаунт", callback_data="settings_reauth")
+            )
+            builder.row(
+                InlineKeyboardButton(text="🚪 Выйти из аккаунта", callback_data="settings_logout")
+            )
         builder.row(
             InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")
         )
@@ -439,3 +443,142 @@ async def process_response_text(message: Message, state: FSMContext):
         parse_mode="HTML",
         reply_markup=get_main_menu(False),
     )
+
+
+@router.callback_query(F.data == "settings_logout")
+async def settings_logout(callback: CallbackQuery):
+    """Подтверждение выхода из аккаунта"""
+    await callback.answer()
+
+    from aiogram.types import InlineKeyboardButton
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✅ Да, выйти", callback_data="settings_logout_confirm"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="settings_back"),
+    )
+
+    await callback.message.edit_text(
+        "🚪 <b>Выход из аккаунта</b>\n\n"
+        "Вы уверены, что хотите выйти?\n"
+        "Мониторинг будет остановлен.\n\n"
+        "Вы сможете заново авторизоваться в любое время.",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup(),
+    )
+
+
+@router.callback_query(F.data == "settings_logout_confirm")
+async def settings_logout_confirm(callback: CallbackQuery):
+    """Выход из аккаунта (удаление сессии)"""
+    await callback.answer("Выход...")
+
+    from userbot.client import userbot_pool
+
+    async with async_session() as session:
+        user = await UserCRUD.get_by_telegram_id(session, callback.from_user.id)
+        if user:
+            await userbot_pool.stop_client(user.id)
+            await UserCRUD.clear_session(session, user.id)
+
+    await callback.message.edit_text(
+        "✅ Вы вышли из аккаунта.\n\n"
+        "Для повторной авторизации нажмите /start"
+    )
+
+
+@router.callback_query(F.data == "settings_reauth")
+async def settings_reauth(callback: CallbackQuery, state: FSMContext):
+    """Переподключение аккаунта (новая авторизация)"""
+    await callback.answer()
+
+    from aiogram.types import InlineKeyboardButton
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✅ Да, переподключить", callback_data="settings_reauth_confirm"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="settings_back"),
+    )
+
+    await callback.message.edit_text(
+        "🔄 <b>Переподключение аккаунта</b>\n\n"
+        "Это удалит текущую сессию и начнёт новую авторизацию.\n"
+        "Используйте если:\n"
+        "• Бот перестал работать\n"
+        "• Вы удалили сессию в Telegram\n"
+        "• Хотите подключить другой номер\n\n"
+        "Продолжить?",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup(),
+    )
+
+
+@router.callback_query(F.data == "settings_reauth_confirm")
+async def settings_reauth_confirm(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение переподключения - очищаем сессию и начинаем авторизацию"""
+    await callback.answer()
+
+    from userbot.client import userbot_pool
+
+    async with async_session() as session:
+        user = await UserCRUD.get_by_telegram_id(session, callback.from_user.id)
+        if user:
+            await userbot_pool.stop_client(user.id)
+            await UserCRUD.clear_session(session, user.id)
+
+    await state.set_state(AuthStates.waiting_phone)
+    await callback.message.edit_text(
+        "📱 Введите ваш номер телефона в международном формате:\n"
+        "Например: +79001234567",
+    )
+    await callback.message.answer(
+        "Для отмены нажмите /start",
+        reply_markup=get_cancel_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "settings_back")
+async def settings_back(callback: CallbackQuery):
+    """Возврат в настройки"""
+    await callback.answer()
+
+    async with async_session() as session:
+        user = await UserCRUD.get_by_telegram_id(session, callback.from_user.id)
+
+        if not user:
+            await callback.message.edit_text("Ошибка. Нажмите /start")
+            return
+
+        response_text = user.response_text or "Я"
+
+        text = (
+            "⚙️ <b>Настройки</b>\n\n"
+            f"📱 Телефон: {user.phone or 'Не указан'}\n"
+            f"🔗 Аккаунт: {'Подключен ✅' if user.session_string else 'Не подключен ❌'}\n"
+            f"📅 Подписка до: {user.subscription_end.strftime('%d.%m.%Y') if user.subscription_end else 'Не активна'}\n"
+            f"🔔 Мониторинг: {'Включен ✅' if user.monitoring_enabled else 'Выключен ❌'}\n\n"
+            f"💬 <b>Текст отклика:</b>\n"
+            f"<i>{response_text}</i>"
+        )
+
+        from aiogram.types import InlineKeyboardButton
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(text="✏️ Изменить текст отклика", callback_data="settings_edit_response")
+        )
+        if user.session_string:
+            builder.row(
+                InlineKeyboardButton(text="🔄 Переподключить аккаунт", callback_data="settings_reauth")
+            )
+            builder.row(
+                InlineKeyboardButton(text="🚪 Выйти из аккаунта", callback_data="settings_logout")
+            )
+        builder.row(
+            InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")
+        )
+
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())

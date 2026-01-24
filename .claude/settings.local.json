@@ -17,7 +17,10 @@
       "Bash(docker build:*)",
       "Bash(docker run:*)",
       "Bash(docker-compose:*)",
-      "Bash(docker stop:*)"
+      "Bash(docker stop:*)",
+      "Bash(docker volume rm:*)",
+      "Bash(sudo rm:*)",
+      "Bash(chmod:*)"
     ]
   }
 }

@@ -10,9 +10,7 @@ from bot.keyboards.inline import (
     get_keywords_keyboard,
     get_keyword_confirm_delete,
     get_keyword_confirm_delete_all,
-    get_keyword_confirm_reset,
 )
-from bot.utils.word_declension import generate_word_variations
 
 router = Router()
 
@@ -36,15 +34,11 @@ async def keywords_menu(message: Message, state: FSMContext):
 
         keywords = await KeywordCRUD.get_user_keywords(session, user.id)
 
-        default_count = len([k for k in keywords if k.is_default])
-        custom_count = len([k for k in keywords if not k.is_default])
-
         await message.answer(
             f"🔤 <b>Ключевые слова</b>\n\n"
-            f"Всего слов: {len(keywords)}\n"
-            f"📌 Базовые: {default_count}\n"
-            f"📝 Свои: {custom_count}\n\n"
-            f"Бот ищет заказы, содержащие эти слова:",
+            f"Всего слов: {len(keywords)}\n\n"
+            f"Бот ищет заказы, содержащие эти слова.\n"
+            f"Поиск умный: учитывает разные формы слов (заказ/заказа/заказы).",
             parse_mode="HTML",
             reply_markup=get_keywords_keyboard(keywords),
         )
@@ -106,33 +100,24 @@ async def keyword_add_process(message: Message, state: FSMContext):
         existing = await KeywordCRUD.get_user_keywords(session, user.id)
         existing_words = {k.word.lower() for k in existing}
 
-        # Генерируем склонения
-        variations = generate_word_variations(word)
-        added_words = []
-
-        for var in variations:
-            if var.lower() not in existing_words:
-                await KeywordCRUD.add_keyword(session, user.id, var)
-                added_words.append(var)
-                existing_words.add(var.lower())
+        # Добавляем слово как есть (без склонений)
+        added = False
+        if word.lower() not in existing_words:
+            await KeywordCRUD.add_keyword(session, user.id, word)
+            added = True
 
         await state.clear()
 
         keywords = await KeywordCRUD.get_user_keywords(session, user.id)
 
-        if added_words:
-            sample = added_words[:5]
-            sample_text = ", ".join(sample)
-            if len(added_words) > 5:
-                sample_text += f" и ещё {len(added_words) - 5}"
+        if added:
             await message.answer(
-                f"✅ Добавлено {len(added_words)} вариаций слова «{word}»!\n\n"
-                f"Примеры: {sample_text}",
+                f"✅ Слово «{word}» добавлено!",
                 reply_markup=get_main_menu(user.monitoring_enabled),
             )
         else:
             await message.answer(
-                f"⚠️ Слово «{word}» и его вариации уже есть в списке.",
+                f"⚠️ Слово «{word}» уже есть в списке.",
                 reply_markup=get_main_menu(user.monitoring_enabled),
             )
         await message.answer(
@@ -350,38 +335,28 @@ async def keyword_bulk_add_process(message: Message, state: FSMContext):
         existing = await KeywordCRUD.get_user_keywords(session, user.id)
         existing_words = {k.word.lower() for k in existing}
 
-        total_added = 0
-        added_base_words = []
+        added_words = []
 
         for word in words:
-            # Генерируем склонения для каждого слова
-            variations = generate_word_variations(word)
-            word_added = 0
-
-            for var in variations:
-                if var.lower() not in existing_words:
-                    await KeywordCRUD.add_keyword(session, user.id, var)
-                    existing_words.add(var.lower())
-                    word_added += 1
-
-            if word_added > 0:
-                added_base_words.append(f"{word} (+{word_added})")
-                total_added += word_added
+            # Добавляем слово как есть (без склонений)
+            if word.lower() not in existing_words:
+                await KeywordCRUD.add_keyword(session, user.id, word)
+                existing_words.add(word.lower())
+                added_words.append(word)
 
         await state.clear()
 
         keywords = await KeywordCRUD.get_user_keywords(session, user.id)
 
-        if total_added > 0:
-            sample = added_base_words[:10]
-            sample_text = "\n".join([f"• {w}" for w in sample])
-            if len(added_base_words) > 10:
-                sample_text += f"\n... и ещё {len(added_base_words) - 10} слов"
+        if added_words:
+            sample = added_words[:10]
+            sample_text = ", ".join(sample)
+            if len(added_words) > 10:
+                sample_text += f" и ещё {len(added_words) - 10}"
 
             await message.answer(
-                f"✅ <b>Добавлено {total_added} вариаций!</b>\n\n"
-                f"Базовые слова и кол-во вариаций:\n{sample_text}",
-                parse_mode="HTML",
+                f"✅ Добавлено слов: {len(added_words)}\n\n"
+                f"{sample_text}",
                 reply_markup=get_main_menu(user.monitoring_enabled),
             )
         else:

@@ -42,6 +42,21 @@ class YukassaConfig:
 
 
 @dataclass
+class RobokassaConfig:
+    merchant_login: str
+    password1: str  # Для формирования подписи при создании платежа
+    password2: str  # Для проверки подписи в Result URL
+    test_mode: bool
+
+
+@dataclass
+class TinkoffConfig:
+    terminal_key: str
+    secret_key: str
+    test_mode: bool
+
+
+@dataclass
 class SubscriptionConfig:
     price: int
     days: int
@@ -53,6 +68,8 @@ class Config:
     telegram_api: TelegramAPIConfig
     database: DatabaseConfig
     yukassa: YukassaConfig
+    robokassa: RobokassaConfig
+    tinkoff: TinkoffConfig
     subscription: SubscriptionConfig
     encryption_key: str
     response_text: str
@@ -81,6 +98,17 @@ def load_config() -> Config:
         yukassa=YukassaConfig(
             shop_id=os.getenv("YUKASSA_SHOP_ID", ""),
             secret_key=os.getenv("YUKASSA_SECRET_KEY", ""),
+        ),
+        robokassa=RobokassaConfig(
+            merchant_login=os.getenv("ROBOKASSA_MERCHANT_LOGIN", ""),
+            password1=os.getenv("ROBOKASSA_PASSWORD1", ""),
+            password2=os.getenv("ROBOKASSA_PASSWORD2", ""),
+            test_mode=os.getenv("ROBOKASSA_TEST_MODE", "true").lower() == "true",
+        ),
+        tinkoff=TinkoffConfig(
+            terminal_key=os.getenv("TINKOFF_TERMINAL_KEY", ""),
+            secret_key=os.getenv("TINKOFF_SECRET_KEY", ""),
+            test_mode=os.getenv("TINKOFF_TEST_MODE", "true").lower() == "true",
         ),
         subscription=SubscriptionConfig(
             price=int(os.getenv("SUBSCRIPTION_PRICE", "1000")),

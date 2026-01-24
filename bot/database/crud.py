@@ -3,7 +3,10 @@ from typing import List, Optional
 from sqlalchemy import select, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.database.models import User, Group, Keyword, City, Payment, Order, DEFAULT_KEYWORDS
+from bot.database.models import (
+    User, Group, Keyword, City, Payment, Order,
+    BlacklistedGroup, BotSettings, DEFAULT_KEYWORDS, DEFAULT_HELP_TEXT
+)
 
 
 class UserCRUD:
@@ -40,7 +43,12 @@ class UserCRUD:
     ) -> User:
         user = await UserCRUD.get_by_telegram_id(session, telegram_id)
         if user is None:
-            user = await UserCRUD.create(session, telegram_id, username)
+            try:
+                user = await UserCRUD.create(session, telegram_id, username)
+            except Exception:
+                # Race condition - user was created by another request
+                await session.rollback()
+                user = await UserCRUD.get_by_telegram_id(session, telegram_id)
         return user
 
     @staticmethod
@@ -54,6 +62,17 @@ class UserCRUD:
             update(User)
             .where(User.id == user_id)
             .values(session_string=session_string, phone=phone)
+        )
+        await session.execute(stmt)
+        await session.commit()
+
+    @staticmethod
+    async def clear_session(session: AsyncSession, user_id: int) -> None:
+        """Удаляет сессию юзербота (разлогин)"""
+        stmt = (
+            update(User)
+            .where(User.id == user_id)
+            .values(session_string=None, monitoring_enabled=False)
         )
         await session.execute(stmt)
         await session.commit()
@@ -260,6 +279,34 @@ class GroupCRUD:
         user_id: int,
         telegram_groups: List[dict],
     ) -> None:
+        # Сначала удалим дубликаты по названию (оставляем supergroup версии)
+        existing_groups = await GroupCRUD.get_user_groups(session, user_id)
+        seen_names = {}
+        for group in existing_groups:
+            if group.group_name in seen_names:
+                # Есть дубликат - удаляем один из них
+                existing_id = seen_names[group.group_name]
+                # Предпочитаем supergroup (ID с -100)
+                if str(group.telegram_group_id).startswith("-100") and not str(existing_id).startswith("-100"):
+                    # Удаляем старую группу (без -100)
+                    await session.execute(
+                        delete(Group).where(
+                            Group.user_id == user_id,
+                            Group.telegram_group_id == existing_id
+                        )
+                    )
+                    seen_names[group.group_name] = group.telegram_group_id
+                else:
+                    # Удаляем текущую группу
+                    await session.execute(
+                        delete(Group).where(Group.id == group.id)
+                    )
+            else:
+                seen_names[group.group_name] = group.telegram_group_id
+
+        await session.commit()
+
+        # Теперь добавляем/обновляем группы
         for tg_group in telegram_groups:
             await GroupCRUD.add_or_update(
                 session,
@@ -425,3 +472,91 @@ class OrderCRUD:
     @staticmethod
     async def get_by_id(session: AsyncSession, order_id: int) -> Optional[Order]:
         return await session.get(Order, order_id)
+
+
+class BlacklistedGroupCRUD:
+    @staticmethod
+    async def get_all(session: AsyncSession) -> List[BlacklistedGroup]:
+        result = await session.execute(
+            select(BlacklistedGroup).order_by(BlacklistedGroup.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def add(
+        session: AsyncSession,
+        telegram_group_id: int,
+        group_name: str,
+        added_by: int,
+        reason: str = None,
+    ) -> BlacklistedGroup:
+        blacklisted = BlacklistedGroup(
+            telegram_group_id=telegram_group_id,
+            group_name=group_name,
+            added_by=added_by,
+            reason=reason,
+        )
+        session.add(blacklisted)
+        await session.commit()
+        await session.refresh(blacklisted)
+        return blacklisted
+
+    @staticmethod
+    async def remove(session: AsyncSession, telegram_group_id: int) -> bool:
+        result = await session.execute(
+            delete(BlacklistedGroup).where(BlacklistedGroup.telegram_group_id == telegram_group_id)
+        )
+        await session.commit()
+        return result.rowcount > 0
+
+    @staticmethod
+    async def is_blacklisted(session: AsyncSession, telegram_group_id: int) -> bool:
+        result = await session.execute(
+            select(BlacklistedGroup).where(BlacklistedGroup.telegram_group_id == telegram_group_id)
+        )
+        return result.scalar_one_or_none() is not None
+
+    @staticmethod
+    async def get_blacklisted_ids(session: AsyncSession) -> set:
+        """Возвращает set ID всех заблокированных групп"""
+        result = await session.execute(select(BlacklistedGroup.telegram_group_id))
+        return {row[0] for row in result.fetchall()}
+
+
+class BotSettingsCRUD:
+    @staticmethod
+    async def get(session: AsyncSession, key: str, default: str = "") -> str:
+        """Получает значение настройки по ключу"""
+        result = await session.execute(
+            select(BotSettings).where(BotSettings.key == key)
+        )
+        setting = result.scalar_one_or_none()
+        if setting:
+            return setting.value
+        return default
+
+    @staticmethod
+    async def set(session: AsyncSession, key: str, value: str) -> None:
+        """Устанавливает значение настройки"""
+        result = await session.execute(
+            select(BotSettings).where(BotSettings.key == key)
+        )
+        setting = result.scalar_one_or_none()
+
+        if setting:
+            setting.value = value
+        else:
+            setting = BotSettings(key=key, value=value)
+            session.add(setting)
+
+        await session.commit()
+
+    @staticmethod
+    async def get_help_text(session: AsyncSession) -> str:
+        """Получает текст помощи"""
+        return await BotSettingsCRUD.get(session, "help_text", DEFAULT_HELP_TEXT)
+
+    @staticmethod
+    async def set_help_text(session: AsyncSession, text: str) -> None:
+        """Устанавливает текст помощи"""
+        await BotSettingsCRUD.set(session, "help_text", text)

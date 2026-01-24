@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Dict, Set, Callable, Awaitable
+from typing import Dict, Set, Callable, Awaitable, Union
 from pyrogram import Client
 from pyrogram.handlers import MessageHandler
 from pyrogram.types import Message
@@ -19,7 +19,7 @@ class UserBotClient:
         user_db_id: int,
         user_telegram_id: int,
         session_string: str,
-        on_message_callback: Callable[[int, int, str, int, str], Awaitable[None]],
+        on_message_callback: Callable[[int, int, str, int, str, Message], Awaitable[None]],
     ):
         self.user_db_id = user_db_id
         self.user_telegram_id = user_telegram_id
@@ -92,6 +92,7 @@ class UserBotClient:
                 message.chat.title or "Unknown",
                 message.id,
                 message.text,
+                message,
             )
 
         except Exception as e:

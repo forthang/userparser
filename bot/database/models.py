@@ -149,22 +149,50 @@ class Order(Base):
         return f"<Order(id={self.id}, responded={self.responded})>"
 
 
-DEFAULT_KEYWORDS = [
-    "заказ",
-    "трансфер",
-    "нужна машина",
-    "нужен водитель",
-    "поездка",
-    "довезти",
-    "подвезти",
-    "такси",
-    "нужно доехать",
-    "ищу водителя",
-    "срочно машина",
-    "отвезти",
-    "встретить",
-    "в аэропорт",
-    "из аэропорта",
-    "на вокзал",
-    "с вокзала",
-]
+class BlacklistedGroup(Base):
+    """Глобальный черный список групп - группы которые нельзя мониторить"""
+    __tablename__ = "blacklisted_groups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_group_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
+    group_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    added_by: Mapped[int] = mapped_column(BigInteger, nullable=False)  # admin telegram_id
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    def __repr__(self) -> str:
+        return f"<BlacklistedGroup(id={self.id}, name={self.group_name})>"
+
+
+class BotSettings(Base):
+    """Глобальные настройки бота (редактируются из админки)"""
+    __tablename__ = "bot_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<BotSettings(key={self.key})>"
+
+
+# Дефолтные ключевые слова убраны - пользователи добавляют свои
+DEFAULT_KEYWORDS = []
+
+# Текст помощи по умолчанию
+DEFAULT_HELP_TEXT = """📚 <b>Справка по боту</b>
+
+<b>📋 Список групп</b> - выберите группы, в которых бот будет искать заказы
+
+<b>🔤 Ключевые слова</b> - слова, по которым бот определяет заказы (заказ, трансфер, такси и т.д.)
+
+<b>🏙 Города</b> - добавьте города, чтобы бот искал заказы только по ним
+
+<b>▶️ Мониторинг</b> - включите/выключите отслеживание заказов
+
+<b>💳 Подписка</b> - оформите или продлите подписку
+
+❓ Остались вопросы? Напишите в поддержку."""

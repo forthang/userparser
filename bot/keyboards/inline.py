@@ -62,7 +62,6 @@ def get_keywords_keyboard(
         InlineKeyboardButton(text="📝 Добавить списком", callback_data="kw_bulk_add"),
     )
     builder.row(
-        InlineKeyboardButton(text="🔄 Сбросить к стандартным", callback_data="kw_reset"),
         InlineKeyboardButton(text="🧹 Удалить все", callback_data="kw_delete_all"),
     )
     builder.row(
@@ -169,48 +168,49 @@ def get_subscription_keyboard(has_subscription: bool = False) -> InlineKeyboardM
     return builder.as_markup()
 
 
-def _get_message_url(group_id: int, message_id: int) -> str:
-    """Формирует URL для перехода к сообщению в группе"""
-    group_id_str = str(group_id)
-
-    # Убираем минус если есть
-    if group_id_str.startswith("-"):
-        group_id_str = group_id_str[1:]
-
-    # Убираем префикс 100 если есть (supergroup)
-    if group_id_str.startswith("100"):
-        group_id_str = group_id_str[3:]
-
-    return f"https://t.me/c/{group_id_str}/{message_id}"
-
-
 def get_order_keyboard(order_id: int, group_id: int, message_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура заказа: взять заказ + перейти к сообщению"""
+    """Клавиатура заказа: кнопка взять заказ + перейти в группу на одной строке"""
     builder = InlineKeyboardBuilder()
+
+    # Формируем ссылку на сообщение в группе
+    # Для приватных групп формат: t.me/c/{channel_id}/{message_id}
+    # channel_id = group_id без префикса -100
+    channel_id = str(group_id).replace("-100", "")
+    group_link = f"https://t.me/c/{channel_id}/{message_id}"
+
+    # Обе кнопки на одной строке
     builder.row(
         InlineKeyboardButton(
-            text="✅ Взять заказ",
+            text="✅ Откликнуться",
             callback_data=f"order_take:{order_id}",
         ),
         InlineKeyboardButton(
-            text="👁 Перейти в группу",
-            url=_get_message_url(group_id, message_id),
+            text="🔗 В группу",
+            url=group_link
         ),
     )
     return builder.as_markup()
 
 
 def get_order_taken_keyboard(group_id: int, message_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура после взятия заказа"""
+    """Клавиатура после взятия заказа с кнопкой перехода в группу"""
     builder = InlineKeyboardBuilder()
+
+    # Формируем ссылку на сообщение в группе
+    # Для приватных групп формат: t.me/c/{channel_id}/{message_id}
+    # channel_id = group_id без префикса -100
+    channel_id = str(group_id).replace("-100", "")
+    group_link = f"https://t.me/c/{channel_id}/{message_id}"
+
+    # Обе кнопки на одной строке
     builder.row(
         InlineKeyboardButton(
             text="✅ Заказ взят",
             callback_data="noop"
         ),
         InlineKeyboardButton(
-            text="👁 Перейти в группу",
-            url=_get_message_url(group_id, message_id),
+            text="🔗 В группу",
+            url=group_link
         ),
     )
     return builder.as_markup()
