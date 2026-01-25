@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Any
 from pyrogram import Client
 from pyrogram.types import Chat
 from pyrogram.enums import ChatType
+from pyrogram.raw import functions, types
 
 logger = logging.getLogger(__name__)
 
@@ -202,39 +203,129 @@ class UserBotService:
             system_version="SDK 33",
             lang_code="en",
         )
-        
+
         await client.connect()
-        
-        # This is the correct way to get the QR code URL
-        exported_token = await client.export_login_token()
-        encoded_token = base64.urlsafe_b64encode(exported_token.token).decode().rstrip("=")
-        qr_code_url = f"tg://login?token={encoded_token}"
-        
-        _auth_clients[user_id] = client # Store client to wait for login
-        
-        return qr_code_url
+
+        # Use raw API to export login token for QR code
+        result = await client.invoke(
+            functions.auth.ExportLoginToken(
+                api_id=api_id,
+                api_hash=api_hash,
+                except_ids=[]
+            )
+        )
+
+        if isinstance(result, types.auth.LoginToken):
+            encoded_token = base64.urlsafe_b64encode(result.token).decode().rstrip("=")
+            qr_code_url = f"tg://login?token={encoded_token}"
+            _auth_clients[user_id] = client
+            return qr_code_url
+        else:
+            await client.disconnect()
+            raise Exception("Failed to export login token")
 
     @classmethod
-    async def wait_for_qr_login(cls, user_id: int) -> Optional[str]:
-        """Ожидает входа по QR-коду и возвращает session string."""
+    async def wait_for_qr_login(cls, user_id: int, api_id: int, api_hash: str, timeout: int = 60) -> Dict[str, Any]:
+        """Ожидает входа по QR-коду и возвращает результат."""
         if user_id not in _auth_clients:
-            return None
+            return {"success": False, "error": "No auth client found"}
 
         client = _auth_clients[user_id]
-        
+
         try:
-            # The client is already connected, we just need to wait for the login to complete
-            # This is done by calling client.start() which will block until login is complete
-            await client.start()
-            session_string = await client.export_session_string()
-            return session_string
+            start_time = asyncio.get_event_loop().time()
+
+            while True:
+                elapsed = asyncio.get_event_loop().time() - start_time
+                if elapsed > timeout:
+                    return {"success": False, "error": "timeout"}
+
+                try:
+                    result = await client.invoke(
+                        functions.auth.ExportLoginToken(
+                            api_id=api_id,
+                            api_hash=api_hash,
+                            except_ids=[]
+                        )
+                    )
+
+                    if isinstance(result, types.auth.LoginTokenSuccess):
+                        # Successfully logged in
+                        session_string = await client.export_session_string()
+                        return {"success": True, "session_string": session_string, "need_2fa": False}
+
+                    elif isinstance(result, types.auth.LoginTokenMigrateTo):
+                        # Need to migrate to another DC
+                        await client.disconnect()
+
+                        client = Client(
+                            name=f"auth_{user_id}",
+                            api_id=api_id,
+                            api_hash=api_hash,
+                            app_version="Telegram Android 10.0.0",
+                            device_model="Android 13",
+                            system_version="SDK 33",
+                            lang_code="en",
+                        )
+                        await client.connect()
+                        _auth_clients[user_id] = client
+
+                        # Import the token on the new DC
+                        import_result = await client.invoke(
+                            functions.auth.ImportLoginToken(token=result.token)
+                        )
+
+                        if isinstance(import_result, types.auth.LoginTokenSuccess):
+                            session_string = await client.export_session_string()
+                            return {"success": True, "session_string": session_string, "need_2fa": False}
+                        elif isinstance(import_result, types.auth.Authorization):
+                            session_string = await client.export_session_string()
+                            return {"success": True, "session_string": session_string, "need_2fa": False}
+
+                    elif isinstance(result, types.auth.LoginToken):
+                        # Token refreshed, still waiting - generate new QR URL
+                        pass
+
+                except Exception as e:
+                    error_str = str(e).lower()
+                    if "session_password_needed" in error_str or "password" in error_str:
+                        return {"success": False, "need_2fa": True}
+                    logger.debug(f"QR poll error (may be normal): {e}")
+
+                await asyncio.sleep(2)
+
         except Exception as e:
             logger.error(f"QR login wait error for user {user_id}: {e}")
-            return None
+            return {"success": False, "error": str(e)}
         finally:
             if client.is_connected:
                 await client.disconnect()
             cls.cleanup_auth(user_id)
+
+    @classmethod
+    async def refresh_qr_token(cls, user_id: int, api_id: int, api_hash: str) -> Optional[str]:
+        """Обновляет QR токен и возвращает новый URL."""
+        if user_id not in _auth_clients:
+            return None
+
+        client = _auth_clients[user_id]
+
+        try:
+            result = await client.invoke(
+                functions.auth.ExportLoginToken(
+                    api_id=api_id,
+                    api_hash=api_hash,
+                    except_ids=[]
+                )
+            )
+
+            if isinstance(result, types.auth.LoginToken):
+                encoded_token = base64.urlsafe_b64encode(result.token).decode().rstrip("=")
+                return f"tg://login?token={encoded_token}"
+        except Exception as e:
+            logger.error(f"Error refreshing QR token: {e}")
+
+        return None
 
     async def get_dialogs(self) -> List[Dict[str, Any]]:
         client = await self._get_client()

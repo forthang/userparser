@@ -6,7 +6,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery
 import qrcode
 import io
-from aiogram.types import BufferedInputFile
+from aiogram.types import BufferedInputFile, InputMediaPhoto
 
 from bot.database.connection import async_session
 
@@ -586,6 +586,11 @@ async def settings_back(callback: CallbackQuery):
 
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
 
+class QRAuthStates(StatesGroup):
+    waiting_qr_scan = State()
+    waiting_qr_2fa = State()
+
+
 @router.callback_query(F.data == 'auth_qr')
 async def auth_qr(callback: CallbackQuery, state: FSMContext):
     await callback.answer('Генерирую QR-код...')
@@ -600,32 +605,56 @@ async def auth_qr(callback: CallbackQuery, state: FSMContext):
 
         # Generate QR code image
         qr_image = qrcode.make(qr_login_url)
-        
+
         # Save image to a byte stream
         img_byte_arr = io.BytesIO()
         qr_image.save(img_byte_arr, format='PNG')
         img_byte_arr.seek(0)
-        
+
+        from aiogram.types import InlineKeyboardButton
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="🔄 Обновить QR", callback_data="auth_qr_refresh"))
+        builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="auth_qr_cancel"))
+
         # Send the QR code to the user
-        await callback.message.answer_photo(
+        qr_msg = await callback.message.answer_photo(
             photo=BufferedInputFile(img_byte_arr.getvalue(), filename='qr_code.png'),
-            caption='Отсканируйте этот QR-код в приложении Telegram, чтобы войти.\n\nНастройки > Устройства > Подключить устройство'
+            caption=(
+                '📱 <b>Вход по QR-коду</b>\n\n'
+                '1. Откройте Telegram на телефоне\n'
+                '2. Перейдите в Настройки → Устройства → Подключить устройство\n'
+                '3. Отсканируйте этот QR-код\n\n'
+                '⏳ Ожидаю сканирования...'
+            ),
+            parse_mode="HTML",
+            reply_markup=builder.as_markup()
         )
 
-        # Wait for the user to log in
-        status_msg = await callback.message.answer('Ожидаю подтверждения входа...')
-        
-        session_string = await UserBotService.wait_for_qr_login(callback.from_user.id)
+        await state.set_state(QRAuthStates.waiting_qr_scan)
+        await state.update_data(qr_message_id=qr_msg.message_id)
 
-        if session_string:
+        # Wait for the user to log in (timeout 60 seconds)
+        result = await UserBotService.wait_for_qr_login(
+            user_id=callback.from_user.id,
+            api_id=config.telegram_api.api_id,
+            api_hash=config.telegram_api.api_hash,
+            timeout=60
+        )
+
+        if result.get("success"):
+            session_string = result.get("session_string")
+
             async with async_session() as session:
                 user = await UserCRUD.get_by_telegram_id(session, callback.from_user.id)
                 if user:
-                    await UserCRUD.update_session(session, user.id, session_string, None) # No phone number with QR login
+                    await UserCRUD.update_session(session, user.id, session_string, None)
 
             await state.clear()
-            await status_msg.edit_text(
-                '✅ Авторизация успешна!\n\nТеперь вы можете настроить бота и запустить мониторинг.'
+            await qr_msg.edit_caption(
+                caption='✅ <b>Авторизация успешна!</b>\n\nТеперь вы можете настроить бота и запустить мониторинг.',
+                parse_mode="HTML"
             )
             async with async_session() as session:
                 user = await UserCRUD.get_by_telegram_id(session, callback.from_user.id)
@@ -633,12 +662,149 @@ async def auth_qr(callback: CallbackQuery, state: FSMContext):
                     'Главное меню:',
                     reply_markup=get_main_menu(user.monitoring_enabled if user else False),
                 )
+
+        elif result.get("need_2fa"):
+            await state.set_state(QRAuthStates.waiting_qr_2fa)
+            await qr_msg.edit_caption(
+                caption=(
+                    '🔐 <b>Требуется пароль 2FA</b>\n\n'
+                    'У вас включена двухфакторная аутентификация.\n'
+                    'Введите ваш облачный пароль:'
+                ),
+                parse_mode="HTML"
+            )
+
+        elif result.get("error") == "timeout":
+            await state.clear()
+            await qr_msg.edit_caption(
+                caption='⏰ <b>Время истекло</b>\n\nQR-код устарел. Попробуйте снова.',
+                parse_mode="HTML",
+                reply_markup=get_auth_keyboard()
+            )
+
         else:
-            await status_msg.edit_text('❌ Не удалось войти по QR-коду. Попробуйте еще раз.')
+            await state.clear()
+            error_msg = result.get("error", "Неизвестная ошибка")
+            await qr_msg.edit_caption(
+                caption=f'❌ <b>Ошибка авторизации</b>\n\n{error_msg}',
+                parse_mode="HTML",
+                reply_markup=get_auth_keyboard()
+            )
 
     except Exception as e:
         logger.error(f'QR auth error for user {callback.from_user.id}: {e}')
+        UserBotService.cleanup_auth(callback.from_user.id)
+        await state.clear()
         await callback.message.answer(
             '❌ Произошла ошибка при генерации QR-кода. Попробуйте еще раз.',
             reply_markup=get_auth_keyboard(),
+        )
+
+
+@router.callback_query(F.data == "auth_qr_refresh")
+async def auth_qr_refresh(callback: CallbackQuery, state: FSMContext):
+    """Обновление QR-кода"""
+    await callback.answer("Обновляю QR-код...")
+
+    try:
+        new_url = await UserBotService.refresh_qr_token(
+            user_id=callback.from_user.id,
+            api_id=config.telegram_api.api_id,
+            api_hash=config.telegram_api.api_hash
+        )
+
+        if new_url:
+            qr_image = qrcode.make(new_url)
+            img_byte_arr = io.BytesIO()
+            qr_image.save(img_byte_arr, format='PNG')
+            img_byte_arr.seek(0)
+
+            from aiogram.types import InlineKeyboardButton
+            from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+            builder = InlineKeyboardBuilder()
+            builder.row(InlineKeyboardButton(text="🔄 Обновить QR", callback_data="auth_qr_refresh"))
+            builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="auth_qr_cancel"))
+
+            await callback.message.edit_media(
+                media=InputMediaPhoto(
+                    media=BufferedInputFile(img_byte_arr.getvalue(), filename='qr_code.png'),
+                    caption=(
+                        '📱 <b>Вход по QR-коду</b>\n\n'
+                        '1. Откройте Telegram на телефоне\n'
+                        '2. Перейдите в Настройки → Устройства → Подключить устройство\n'
+                        '3. Отсканируйте этот QR-код\n\n'
+                        '⏳ Ожидаю сканирования...'
+                    ),
+                    parse_mode="HTML"
+                ),
+                reply_markup=builder.as_markup()
+            )
+        else:
+            await callback.answer("Не удалось обновить QR-код. Начните заново.", show_alert=True)
+
+    except Exception as e:
+        logger.error(f"QR refresh error: {e}")
+        await callback.answer("Ошибка обновления QR-кода", show_alert=True)
+
+
+@router.callback_query(F.data == "auth_qr_cancel")
+async def auth_qr_cancel(callback: CallbackQuery, state: FSMContext):
+    """Отмена QR-авторизации"""
+    await callback.answer()
+    UserBotService.cleanup_auth(callback.from_user.id)
+    await state.clear()
+
+    await callback.message.delete()
+    await callback.message.answer(
+        "Авторизация отменена.",
+        reply_markup=get_auth_keyboard(),
+    )
+
+
+@router.message(QRAuthStates.waiting_qr_2fa)
+async def process_qr_2fa_password(message: Message, state: FSMContext):
+    """Обработка 2FA пароля после QR-авторизации"""
+    password = message.text.strip()
+
+    if password == "/cancel":
+        await state.clear()
+        UserBotService.cleanup_auth(message.from_user.id)
+        await message.answer(
+            "Авторизация отменена.",
+            reply_markup=get_auth_keyboard(),
+        )
+        return
+
+    status_msg = await message.answer("⏳ Проверяю пароль...")
+
+    try:
+        session_string = await UserBotService.check_password(
+            user_id=message.from_user.id,
+            password=password,
+        )
+
+        async with async_session() as session:
+            user = await UserCRUD.get_by_telegram_id(session, message.from_user.id)
+            if user:
+                await UserCRUD.update_session(session, user.id, session_string, None)
+
+        await state.clear()
+        await status_msg.edit_text(
+            "✅ Авторизация успешна!\n\n"
+            "Теперь вы можете настроить бота и запустить мониторинг."
+        )
+
+        async with async_session() as session:
+            user = await UserCRUD.get_by_telegram_id(session, message.from_user.id)
+            await message.answer(
+                "Главное меню:",
+                reply_markup=get_main_menu(user.monitoring_enabled if user else False),
+            )
+
+    except Exception as e:
+        logger.error(f"QR 2FA error: {e}")
+        await status_msg.edit_text(
+            f"❌ Неверный пароль или ошибка.\n\n"
+            "Введите пароль ещё раз или /cancel для отмены."
         )
