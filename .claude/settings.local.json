@@ -20,7 +20,8 @@
       "Bash(docker stop:*)",
       "Bash(docker volume rm:*)",
       "Bash(sudo rm:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(git add:*)"
     ]
   }
 }

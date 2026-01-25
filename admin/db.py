@@ -19,7 +19,7 @@ DB_PASSWORD = os.getenv('DB_PASSWORD', '')
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-Session = sessionmaker(bind=engine)
+Session = sessionmaker(bind=engine, expire_on_commit=False)
 
 
 @contextmanager
@@ -29,6 +29,8 @@ def get_session():
     try:
         yield session
         session.commit()
+        # Detach all objects from session so they can be used after close
+        session.expunge_all()
     except Exception:
         session.rollback()
         raise
@@ -181,7 +183,9 @@ def get_user_messages(user_id: int, filter_type: str = 'all', limit: int = 500):
     """Get user's group messages from last 24 hours"""
     threshold = datetime.utcnow() - timedelta(hours=24)
     with get_session() as session:
-        query = select(GroupMessage).where(
+        query = select(GroupMessage).options(
+            joinedload(GroupMessage.group)
+        ).where(
             GroupMessage.user_id == user_id,
             GroupMessage.created_at >= threshold
         )
@@ -194,7 +198,7 @@ def get_user_messages(user_id: int, filter_type: str = 'all', limit: int = 500):
         result = session.execute(
             query.order_by(GroupMessage.created_at.desc()).limit(limit)
         )
-        return list(result.scalars().all())
+        return list(result.unique().scalars().all())
 
 
 # ============ Statistics ============
