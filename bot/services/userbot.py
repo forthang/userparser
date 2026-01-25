@@ -58,34 +58,26 @@ class UserBotService:
         # Ensure any previous auth client is disconnected and removed
         cls.cleanup_auth(user_id)
 
-        # Use consistent client parameters for all pyrogram clients
-        client_params = {
-            "api_id": api_id,
-            "api_hash": api_hash,
-            "app_version": "Telegram Android 10.0.0",
-            "device_model": "Android 13",
-            "system_version": "SDK 33",
-            "lang_code": "en",
-            # in_memory=False by default, so it will create a session file
-        }
-
         # Создаём новый клиент для отправки кода
         client = Client(
             name=f"auth_{user_id}",
-            **client_params
+            api_id=api_id,
+            api_hash=api_hash,
+            app_version="Telegram Android 10.0.0",
+            device_model="Android 13",
+            system_version="SDK 33",
+            lang_code="en",
+            in_memory=True,
         )
 
-        try:
-            await client.connect()
-            sent_code = await client.send_code(phone)
-            logger.info(f"Code sent to {phone}, phone_code_hash: {sent_code.phone_code_hash[:10]}...")
-            return sent_code.phone_code_hash
-        finally:
-            # Disconnect immediately after sending code, rely on session file for sign_in
-            if client.is_connected:
-                await client.disconnect()
-            # Do NOT store client in _auth_clients, rely on session file
-            # _auth_clients[user_id] = client # Removed
+        await client.connect()
+        sent_code = await client.send_code(phone)
+        logger.info(f"Code sent to {phone}, phone_code_hash: {sent_code.phone_code_hash[:10]}...")
+
+        # Сохраняем клиент для последующего sign_in
+        _auth_clients[user_id] = client
+
+        return sent_code.phone_code_hash
 
     @classmethod
     async def sign_in(
@@ -96,19 +88,12 @@ class UserBotService:
         phone_code_hash: str,
     ) -> Dict[str, Any]:
         """Авторизуется используя сохранённый клиент"""
-        # Create a new client instance, which will load the session file created by send_code
-        client = Client(
-            name=f"auth_{user_id}",
-            api_id=0, # These will be loaded from session file
-            api_hash="", # These will be loaded from session file
-            app_version="Telegram Android 10.0.0",
-            device_model="Android 13",
-            system_version="SDK 33",
-            lang_code="en",
-        )
+        if user_id not in _auth_clients:
+            raise Exception("No auth client found. Please request a new code.")
+
+        client = _auth_clients[user_id]
 
         try:
-            await client.connect() # Connects and loads session from file
             await client.sign_in(
                 phone_number=phone,
                 phone_code_hash=phone_code_hash,
@@ -116,6 +101,9 @@ class UserBotService:
             )
 
             session_string = await client.export_session_string()
+
+            # Успешно - очищаем клиент
+            cls.cleanup_auth(user_id)
 
             return {
                 "success": True,
@@ -126,52 +114,34 @@ class UserBotService:
         except Exception as e:
             error_str = str(e).lower()
             if "password" in error_str or "2fa" in error_str or "two-step" in error_str:
+                # Не очищаем клиент - он нужен для check_password
                 return {
                     "success": False,
                     "need_2fa": True,
                 }
-            raise # Re-raise other exceptions
-        finally:
-            # Always disconnect and clean up session file
-            if client.is_connected:
-                await client.disconnect()
-            try:
-                os.remove(f"auth_{user_id}.session")
-            except FileNotFoundError:
-                pass
+            # При других ошибках очищаем
+            cls.cleanup_auth(user_id)
+            raise
 
     @classmethod
     async def check_password(cls, user_id: int, password: str) -> str:
         """Проверяет 2FA пароль"""
-        # Create a new client instance, which will load the session file
-        client = Client(
-            name=f"auth_{user_id}",
-            api_id=0, # These will be loaded from session file
-            api_hash="", # These will be loaded from session file
-            app_version="Telegram Android 10.0.0",
-            device_model="Android 13",
-            system_version="SDK 33",
-            lang_code="en",
-        )
+        if user_id not in _auth_clients:
+            raise Exception("No auth client found. Please request a new code.")
+
+        client = _auth_clients[user_id]
 
         try:
-            await client.connect() # Connects and loads session from file
             await client.check_password(password)
             session_string = await client.export_session_string()
             return session_string
         finally:
-            # Always disconnect and clean up session file
-            if client.is_connected:
-                await client.disconnect()
-            try:
-                os.remove(f"auth_{user_id}.session")
-            except FileNotFoundError:
-                pass
+            # Очищаем клиент после проверки пароля
+            cls.cleanup_auth(user_id)
 
     @classmethod
     def cleanup_auth(cls, user_id: int):
         """Очищает сессию авторизации"""
-        # Disconnect any client that might still be in _auth_clients (legacy or error state)
         if user_id in _auth_clients:
             try:
                 client = _auth_clients[user_id]
@@ -181,13 +151,6 @@ class UserBotService:
                 logger.warning(f"Error disconnecting client for user {user_id} during cleanup: {e}")
             finally:
                 del _auth_clients[user_id]
-        # Always try to remove the session file
-        try:
-            os.remove(f"auth_{user_id}.session")
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            logger.warning(f"Error removing session file for user {user_id} during cleanup: {e}")
 
     @classmethod
     async def get_qr_login_url(cls, user_id: int, api_id: int, api_hash: str) -> str:
