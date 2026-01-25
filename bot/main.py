@@ -9,7 +9,7 @@ from bot.config import config
 from bot.database.connection import init_db, async_session
 from bot.database.crud import UserCRUD
 from bot.services.scheduler import get_scheduler
-from bot.handlers import start, groups, keywords, cities, monitoring, subscription, admin
+from bot.handlers import start, groups, keywords, cities, monitoring, subscription, admin, reply
 from bot.handlers.monitoring import process_group_message, set_bot_instance
 from userbot.client import userbot_pool
 
@@ -109,6 +109,7 @@ async def main():
     dp.include_router(monitoring.router)
     dp.include_router(subscription.router)
     dp.include_router(admin.router)
+    dp.include_router(reply.router)
 
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)

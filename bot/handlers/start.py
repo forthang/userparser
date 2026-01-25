@@ -11,7 +11,7 @@ from aiogram.types import BufferedInputFile, InputMediaPhoto
 from bot.database.connection import async_session
 
 logger = logging.getLogger(__name__)
-from bot.database.crud import UserCRUD, BotSettingsCRUD
+from bot.database.crud import UserCRUD, BotSettingsCRUD, UserLogCRUD
 from bot.keyboards.main_menu import (
     get_main_menu, get_auth_keyboard, get_cancel_keyboard,
     get_code_keyboard
@@ -222,6 +222,7 @@ async def code_submit_handler(callback: CallbackQuery, state: FSMContext):
             user = await UserCRUD.get_by_telegram_id(session, callback.from_user.id)
             if user:
                 await UserCRUD.update_session(session, user.id, session_string, phone)
+                await UserLogCRUD.add(session, user.id, "auth_success", f"phone={phone}")
 
         await state.clear()
         await callback.message.edit_text(
@@ -257,6 +258,11 @@ async def code_submit_handler(callback: CallbackQuery, state: FSMContext):
             await state.clear()
         else:
             logger.error(f"Auth error for user {callback.from_user.id}: {e}")
+            # Log auth error
+            async with async_session() as session:
+                user = await UserCRUD.get_by_telegram_id(session, callback.from_user.id)
+                if user:
+                    await UserLogCRUD.add(session, user.id, "auth_error", str(e))
             await callback.message.edit_text(
                 "❌ Ошибка авторизации.\n"
                 "Попробуйте ещё раз.",
@@ -309,6 +315,7 @@ async def process_2fa_password(message: Message, state: FSMContext):
             user = await UserCRUD.get_by_telegram_id(session, message.from_user.id)
             if user:
                 await UserCRUD.update_session(session, user.id, session_string, phone)
+                await UserLogCRUD.add(session, user.id, "auth_success", f"2FA, phone={phone}")
 
         await state.clear()
         await status_msg.edit_text(
@@ -324,6 +331,11 @@ async def process_2fa_password(message: Message, state: FSMContext):
             )
 
     except Exception as e:
+        # Log 2FA error
+        async with async_session() as session:
+            user = await UserCRUD.get_by_telegram_id(session, message.from_user.id)
+            if user:
+                await UserLogCRUD.add(session, user.id, "auth_2fa_error", str(e))
         await status_msg.edit_text(
             f"❌ Неверный пароль или ошибка: {str(e)}\n\n"
             "Введите пароль ещё раз или отправьте «❌ Отмена» для отмены."
@@ -484,6 +496,7 @@ async def settings_logout_confirm(callback: CallbackQuery):
         if user:
             await userbot_pool.stop_client(user.id)
             await UserCRUD.clear_session(session, user.id)
+            await UserLogCRUD.add(session, user.id, "logout", "User logged out")
 
     await callback.message.edit_text(
         "✅ Вы вышли из аккаунта.\n\n"
@@ -665,6 +678,7 @@ async def auth_qr_check(callback: CallbackQuery, state: FSMContext):
                 user = await UserCRUD.get_by_telegram_id(session, callback.from_user.id)
                 if user:
                     await UserCRUD.update_session(session, user.id, session_string, None)
+                    await UserLogCRUD.add(session, user.id, "auth_success", "QR code auth")
 
             await state.clear()
 
@@ -833,6 +847,7 @@ async def process_qr_2fa_password(message: Message, state: FSMContext):
             user = await UserCRUD.get_by_telegram_id(session, message.from_user.id)
             if user:
                 await UserCRUD.update_session(session, user.id, session_string, None)
+                await UserLogCRUD.add(session, user.id, "auth_success", "QR code auth with 2FA")
 
         await state.clear()
         await status_msg.edit_text(
@@ -849,6 +864,11 @@ async def process_qr_2fa_password(message: Message, state: FSMContext):
 
     except Exception as e:
         logger.error(f"QR 2FA error: {e}")
+        # Log QR 2FA error
+        async with async_session() as session:
+            user = await UserCRUD.get_by_telegram_id(session, message.from_user.id)
+            if user:
+                await UserLogCRUD.add(session, user.id, "auth_qr_2fa_error", str(e))
         await status_msg.edit_text(
             f"❌ Неверный пароль или ошибка.\n\n"
             "Введите пароль ещё раз или /cancel для отмены."

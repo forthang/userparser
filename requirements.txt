@@ -10,3 +10,8 @@ cryptography==42.0.2
 pymorphy3==2.0.1
 qrcode[pil]
 Pillow
+
+# Admin panel
+Flask==3.0.0
+Flask-Login==0.6.3
+psycopg2-binary==2.9.9

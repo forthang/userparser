@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Admin Panel{% endblock %}
+
+{% block content %}
+<h2 class="mt-3 mb-4">Dashboard</h2>
+
+<!-- Statistics cards -->
+<div class="row">
+    <div class="col-md-2">
+        <div class="card text-bg-primary">
+            <div class="card-body text-center">
+                <h3>{{ stats.total }}</h3>
+                <small>Total Users</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-bg-success">
+            <div class="card-body text-center">
+                <h3>{{ stats.with_subscription }}</h3>
+                <small>With Subscription</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-bg-info">
+            <div class="card-body text-center">
+                <h3>{{ stats.monitoring }}</h3>
+                <small>Monitoring On</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-bg-warning">
+            <div class="card-body text-center">
+                <h3>{{ stats.no_session }}</h3>
+                <small>No Session</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-bg-danger">
+            <div class="card-body text-center">
+                <h3>{{ stats.banned }}</h3>
+                <small>Banned</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<hr>
+
+<!-- Problem users -->
+<div class="row">
+    {% if problems.expired_subscription %}
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header bg-warning">
+                <i class="bi bi-exclamation-triangle"></i> Expired Subscription
+            </div>
+            <ul class="list-group list-group-flush">
+                {% for user in problems.expired_subscription[:10] %}
+                <li class="list-group-item d-flex justify-content-between">
+                    <a href="{{ url_for('users.user_detail', user_id=user.id) }}">
+                        {{ user.username or user.telegram_id }}
+                    </a>
+                    <small class="text-muted">{{ user.subscription_end.strftime('%d.%m.%Y') if user.subscription_end else 'Never' }}</small>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if problems.no_session %}
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header bg-info text-white">
+                <i class="bi bi-person-x"></i> No Session (with subscription)
+            </div>
+            <ul class="list-group list-group-flush">
+                {% for user in problems.no_session[:10] %}
+                <li class="list-group-item d-flex justify-content-between">
+                    <a href="{{ url_for('users.user_detail', user_id=user.id) }}">
+                        {{ user.username or user.telegram_id }}
+                    </a>
+                    <small class="text-muted">{{ user.subscription_end.strftime('%d.%m.%Y') if user.subscription_end else '' }}</small>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if problems.with_errors %}
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header bg-danger text-white">
+                <i class="bi bi-bug"></i> Recent Errors
+            </div>
+            <ul class="list-group list-group-flush">
+                {% for user in problems.with_errors[:10] %}
+                <li class="list-group-item">
+                    <a href="{{ url_for('users.user_detail', user_id=user.id) }}">
+                        {{ user.username or user.telegram_id }}
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{% if not problems.expired_subscription and not problems.no_session and not problems.with_errors %}
+<div class="alert alert-success">
+    <i class="bi bi-check-circle"></i> No problems detected!
+</div>
+{% endif %}
+{% endblock %}

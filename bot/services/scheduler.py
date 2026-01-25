@@ -5,7 +5,7 @@ from typing import Optional
 from aiogram import Bot
 
 from bot.database.connection import async_session
-from bot.database.crud import UserCRUD
+from bot.database.crud import UserCRUD, GroupMessageCRUD
 from bot.config import config
 
 logger = logging.getLogger(__name__)
@@ -39,10 +39,21 @@ class SubscriptionScheduler:
         while self._running:
             try:
                 await self._check_subscriptions()
+                await self._cleanup_old_messages()
             except Exception as e:
                 logger.error(f"Error in subscription scheduler: {e}")
 
             await asyncio.sleep(3600)
+
+    async def _cleanup_old_messages(self):
+        """Cleanup group messages older than 24 hours"""
+        try:
+            async with async_session() as session:
+                deleted = await GroupMessageCRUD.cleanup_old_messages(session)
+                if deleted > 0:
+                    logger.info(f"Cleaned up {deleted} old group messages")
+        except Exception as e:
+            logger.error(f"Error cleaning up old messages: {e}")
 
     async def _check_subscriptions(self):
         logger.info("Checking subscriptions...")

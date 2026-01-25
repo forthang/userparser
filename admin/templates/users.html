@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}Users - Admin Panel{% endblock %}
+
+{% block content %}
+<h2 class="mt-3 mb-4">Users</h2>
+
+<!-- Filters -->
+<div class="card mb-3">
+    <div class="card-body">
+        <form method="GET" class="row g-3 align-items-center">
+            <div class="col-auto">
+                <select name="filter" class="form-select" onchange="this.form.submit()">
+                    <option value="all" {% if filter_type == 'all' %}selected{% endif %}>All users</option>
+                    <option value="with_subscription" {% if filter_type == 'with_subscription' %}selected{% endif %}>With subscription</option>
+                    <option value="without_subscription" {% if filter_type == 'without_subscription' %}selected{% endif %}>Without subscription</option>
+                    <option value="monitoring" {% if filter_type == 'monitoring' %}selected{% endif %}>Monitoring enabled</option>
+                    <option value="banned" {% if filter_type == 'banned' %}selected{% endif %}>Banned</option>
+                </select>
+            </div>
+            <div class="col-auto">
+                <input type="text" name="search" class="form-control" placeholder="Search by ID, username, phone" value="{{ search }}">
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-primary">Search</button>
+                {% if search %}
+                <a href="{{ url_for('users.users_list', filter=filter_type) }}" class="btn btn-secondary">Clear</a>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Users table -->
+<div class="card">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover table-sm">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Telegram ID</th>
+                        <th>Username</th>
+                        <th>Phone</th>
+                        <th>Subscription</th>
+                        <th>Monitoring</th>
+                        <th>Session</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in users %}
+                    <tr onclick="window.location='{{ url_for('users.user_detail', user_id=user.id) }}'" style="cursor: pointer;">
+                        <td>{{ user.id }}</td>
+                        <td>{{ user.telegram_id }}</td>
+                        <td>{{ user.username or '-' }}</td>
+                        <td>{{ user.phone or '-' }}</td>
+                        <td>
+                            {% if user.is_subscription_active %}
+                                <span class="badge bg-success">{{ user.subscription_end.strftime('%d.%m.%Y') }}</span>
+                            {% elif user.subscription_end %}
+                                <span class="badge bg-danger">Expired {{ user.subscription_end.strftime('%d.%m.%Y') }}</span>
+                            {% else %}
+                                <span class="badge bg-secondary">Never</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if user.monitoring_enabled %}
+                                <span class="badge bg-success">ON</span>
+                            {% else %}
+                                <span class="badge bg-secondary">OFF</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if user.session_string %}
+                                <span class="badge bg-success">Yes</span>
+                            {% else %}
+                                <span class="badge bg-warning">No</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if user.is_banned %}
+                                <span class="badge bg-danger">Banned</span>
+                            {% elif user.is_active %}
+                                <span class="badge bg-success">Active</span>
+                            {% else %}
+                                <span class="badge bg-secondary">Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ user.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="9" class="text-center text-muted">No users found</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <small class="text-muted">Total: {{ users|length }} users</small>
+    </div>
+</div>
+{% endblock %}

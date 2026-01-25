@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Admin Panel{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <style>
+        body { background-color: #f8f9fa; }
+        .sidebar { min-height: 100vh; background: #212529; }
+        .sidebar a { color: #adb5bd; text-decoration: none; padding: 10px 15px; display: block; }
+        .sidebar a:hover, .sidebar a.active { color: #fff; background: #343a40; }
+        .content { padding: 20px; }
+        .card { margin-bottom: 15px; }
+        .badge-success { background-color: #198754; }
+        .badge-danger { background-color: #dc3545; }
+        .badge-warning { background-color: #ffc107; color: #000; }
+        .badge-secondary { background-color: #6c757d; }
+        .table-sm td, .table-sm th { padding: 0.4rem; font-size: 0.875rem; }
+        .message-text { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .matched { background-color: #d1e7dd !important; }
+        .unmatched { background-color: #f8f9fa; }
+        .log-details { font-size: 0.8rem; color: #6c757d; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+        pre { background: #f1f1f1; padding: 10px; border-radius: 5px; font-size: 0.8rem; max-height: 200px; overflow: auto; }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            {% if current_user.is_authenticated %}
+            <nav class="col-md-2 d-none d-md-block sidebar py-3">
+                <div class="text-center mb-4">
+                    <h5 class="text-white">Admin Panel</h5>
+                </div>
+                <a href="{{ url_for('dashboard.dashboard') }}" class="{% if request.endpoint == 'dashboard.dashboard' %}active{% endif %}">
+                    <i class="bi bi-speedometer2"></i> Dashboard
+                </a>
+                <a href="{{ url_for('users.users_list') }}" class="{% if 'users' in request.endpoint %}active{% endif %}">
+                    <i class="bi bi-people"></i> Users
+                </a>
+                <hr class="bg-secondary">
+                <a href="{{ url_for('dashboard.logout') }}">
+                    <i class="bi bi-box-arrow-right"></i> Logout
+                </a>
+            </nav>
+            {% endif %}
+
+            <main class="{% if current_user.is_authenticated %}col-md-10 ms-sm-auto{% else %}col-12{% endif %} px-md-4 content">
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                    {% if messages %}
+                        {% for category, message in messages %}
+                            <div class="alert alert-{{ 'danger' if category == 'error' else 'success' }} alert-dismissible fade show mt-3" role="alert">
+                                {{ message }}
+                                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                            </div>
+                        {% endfor %}
+                    {% endif %}
+                {% endwith %}
+
+                {% block content %}{% endblock %}
+            </main>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        async function apiCall(url, method = 'POST', data = null) {
+            const options = {
+                method: method,
+                headers: { 'Content-Type': 'application/json' }
+            };
+            if (data) options.body = JSON.stringify(data);
+
+            const response = await fetch(url, options);
+            return await response.json();
+        }
+
+        async function extendSubscription(userId, days = 30) {
+            if (!confirm(`Extend subscription by ${days} days?`)) return;
+            const result = await apiCall(`/api/users/${userId}/extend-subscription`, 'POST', { days });
+            alert(result.success ? result.message : result.error);
+            if (result.success) location.reload();
+        }
+
+        async function resetSession(userId) {
+            if (!confirm('Reset user session? User will need to login again.')) return;
+            const result = await apiCall(`/api/users/${userId}/reset-session`);
+            alert(result.success ? result.message : result.error);
+            if (result.success) location.reload();
+        }
+
+        async function banUser(userId) {
+            if (!confirm('Ban this user?')) return;
+            const result = await apiCall(`/api/users/${userId}/ban`);
+            alert(result.success ? result.message : result.error);
+            if (result.success) location.reload();
+        }
+
+        async function unbanUser(userId) {
+            if (!confirm('Unban this user?')) return;
+            const result = await apiCall(`/api/users/${userId}/unban`);
+            alert(result.success ? result.message : result.error);
+            if (result.success) location.reload();
+        }
+
+        async function toggleMonitoring(userId, enabled) {
+            const result = await apiCall(`/api/users/${userId}/toggle-monitoring`, 'POST', { enabled });
+            alert(result.success ? result.message : result.error);
+            if (result.success) location.reload();
+        }
+
+        async function sendMessage(userId) {
+            const message = document.getElementById('messageText').value.trim();
+            if (!message) {
+                alert('Enter message text');
+                return;
+            }
+            const result = await apiCall(`/api/users/${userId}/send-message`, 'POST', { message });
+            alert(result.success ? result.message : result.error);
+            if (result.success) {
+                document.getElementById('messageText').value = '';
+                bootstrap.Modal.getInstance(document.getElementById('messageModal')).hide();
+            }
+        }
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

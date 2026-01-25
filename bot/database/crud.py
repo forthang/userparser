@@ -5,7 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.models import (
     User, Group, Keyword, City, Payment, Order,
-    BlacklistedGroup, BotSettings, DEFAULT_KEYWORDS, DEFAULT_HELP_TEXT
+    BlacklistedGroup, BotSettings, UserLog, GroupMessage,
+    DEFAULT_KEYWORDS, DEFAULT_HELP_TEXT
 )
 
 
@@ -560,3 +561,138 @@ class BotSettingsCRUD:
     async def set_help_text(session: AsyncSession, text: str) -> None:
         """Устанавливает текст помощи"""
         await BotSettingsCRUD.set(session, "help_text", text)
+
+
+class UserLogCRUD:
+    """CRUD операции для логов действий пользователей"""
+
+    @staticmethod
+    async def add(
+        session: AsyncSession,
+        user_id: int,
+        action: str,
+        details: Optional[str] = None,
+    ) -> UserLog:
+        """Добавляет запись лога"""
+        log = UserLog(
+            user_id=user_id,
+            action=action,
+            details=details,
+        )
+        session.add(log)
+        await session.commit()
+        await session.refresh(log)
+        return log
+
+    @staticmethod
+    async def get_user_logs(
+        session: AsyncSession,
+        user_id: int,
+        limit: int = 100,
+    ) -> List[UserLog]:
+        """Получает логи пользователя"""
+        result = await session.execute(
+            select(UserLog)
+            .where(UserLog.user_id == user_id)
+            .order_by(UserLog.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_recent_errors(
+        session: AsyncSession,
+        limit: int = 50,
+    ) -> List[UserLog]:
+        """Получает последние ошибки"""
+        result = await session.execute(
+            select(UserLog)
+            .where(UserLog.action.like("%error%"))
+            .order_by(UserLog.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+
+class GroupMessageCRUD:
+    """CRUD операции для сообщений из групп"""
+
+    @staticmethod
+    async def add(
+        session: AsyncSession,
+        user_id: int,
+        group_id: int,
+        telegram_group_id: int,
+        message_id: int,
+        message_text: str,
+        matched_keyword: Optional[str] = None,
+        matched_city: Optional[str] = None,
+    ) -> GroupMessage:
+        """Добавляет сообщение"""
+        msg = GroupMessage(
+            user_id=user_id,
+            group_id=group_id,
+            telegram_group_id=telegram_group_id,
+            message_id=message_id,
+            message_text=message_text,
+            matched_keyword=matched_keyword,
+            matched_city=matched_city,
+        )
+        session.add(msg)
+        await session.commit()
+        await session.refresh(msg)
+        return msg
+
+    @staticmethod
+    async def get_user_messages(
+        session: AsyncSession,
+        user_id: int,
+        limit: int = 500,
+    ) -> List[GroupMessage]:
+        """Получает сообщения пользователя за последние 24 часа"""
+        threshold = datetime.utcnow() - timedelta(hours=24)
+        result = await session.execute(
+            select(GroupMessage)
+            .where(
+                GroupMessage.user_id == user_id,
+                GroupMessage.created_at >= threshold
+            )
+            .order_by(GroupMessage.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_user_messages_filtered(
+        session: AsyncSession,
+        user_id: int,
+        matched_only: bool = False,
+        unmatched_only: bool = False,
+        limit: int = 500,
+    ) -> List[GroupMessage]:
+        """Получает отфильтрованные сообщения"""
+        threshold = datetime.utcnow() - timedelta(hours=24)
+        query = select(GroupMessage).where(
+            GroupMessage.user_id == user_id,
+            GroupMessage.created_at >= threshold
+        )
+
+        if matched_only:
+            query = query.where(GroupMessage.matched_keyword.isnot(None))
+        elif unmatched_only:
+            query = query.where(GroupMessage.matched_keyword.is_(None))
+
+        result = await session.execute(
+            query.order_by(GroupMessage.created_at.desc()).limit(limit)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def cleanup_old_messages(session: AsyncSession) -> int:
+        """Удаляет сообщения старше 24 часов"""
+        threshold = datetime.utcnow() - timedelta(hours=24)
+        result = await session.execute(
+            delete(GroupMessage).where(GroupMessage.created_at < threshold)
+        )
+        await session.commit()
+        return result.rowcount

@@ -55,6 +55,12 @@ class User(Base):
     orders: Mapped[List["Order"]] = relationship(
         "Order", back_populates="user", cascade="all, delete-orphan"
     )
+    logs: Mapped[List["UserLog"]] = relationship(
+        "UserLog", back_populates="user", cascade="all, delete-orphan"
+    )
+    group_messages: Mapped[List["GroupMessage"]] = relationship(
+        "GroupMessage", back_populates="user", cascade="all, delete-orphan"
+    )
 
     @property
     def is_subscription_active(self) -> bool:
@@ -162,6 +168,43 @@ class BlacklistedGroup(Base):
 
     def __repr__(self) -> str:
         return f"<BlacklistedGroup(id={self.id}, name={self.group_name})>"
+
+
+class UserLog(Base):
+    """Логи действий пользователей для админ-панели"""
+    __tablename__ = "user_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    action: Mapped[str] = mapped_column(String(100), nullable=False)  # auth_start, auth_success, monitoring_on, error, etc.
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON с деталями
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    user: Mapped["User"] = relationship("User", back_populates="logs")
+
+    def __repr__(self) -> str:
+        return f"<UserLog(id={self.id}, action={self.action})>"
+
+
+class GroupMessage(Base):
+    """Все сообщения из групп для анализа (хранятся 24 часа)"""
+    __tablename__ = "group_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    group_id: Mapped[int] = mapped_column(Integer, ForeignKey("groups.id", ondelete="CASCADE"))
+    telegram_group_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_text: Mapped[str] = mapped_column(Text, nullable=False)
+    matched_keyword: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Если нашлось ключевое слово
+    matched_city: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Если нашёлся город
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+    user: Mapped["User"] = relationship("User", back_populates="group_messages")
+    group: Mapped["Group"] = relationship("Group")
+
+    def __repr__(self) -> str:
+        return f"<GroupMessage(id={self.id}, matched={self.matched_keyword is not None})>"
 
 
 class BotSettings(Base):

@@ -3,7 +3,7 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message as AiogramMessage, CallbackQuery
 
 from bot.database.connection import async_session
-from bot.database.crud import UserCRUD, GroupCRUD, KeywordCRUD, CityCRUD, OrderCRUD, BlacklistedGroupCRUD
+from bot.database.crud import UserCRUD, GroupCRUD, KeywordCRUD, CityCRUD, OrderCRUD, BlacklistedGroupCRUD, UserLogCRUD, GroupMessageCRUD
 from bot.keyboards.main_menu import MainMenuText, get_main_menu
 from bot.keyboards.inline import get_order_keyboard, get_order_taken_keyboard
 from bot.services.userbot import UserBotService
@@ -97,6 +97,7 @@ async def monitoring_start(message: AiogramMessage):
             if not success:
                 logger.error(f"Failed to start userbot for user {user.telegram_id}")
                 await UserCRUD.toggle_monitoring(session, user.id, False)
+                await UserLogCRUD.add(session, user.id, "monitoring_error", "Failed to start userbot")
                 await message.answer(
                     "❌ Не удалось запустить мониторинг.\n"
                     "Попробуйте позже или переавторизуйтесь."
@@ -104,6 +105,9 @@ async def monitoring_start(message: AiogramMessage):
                 return
 
             logger.info(f"Started userbot for user {user.telegram_id} via monitoring button")
+
+        # Log monitoring start
+        await UserLogCRUD.add(session, user.id, "monitoring_on", f"groups={len(enabled_groups)}, keywords={len(keywords)}")
 
         await message.answer(
             f"✅ <b>Мониторинг запущен!</b>\n\n"
@@ -132,6 +136,9 @@ async def monitoring_stop(message: AiogramMessage):
         # Останавливаем userbot клиент
         await userbot_pool.stop_client(user.id)
         logger.info(f"Stopped userbot for user {user.telegram_id}")
+
+        # Log monitoring stop
+        await UserLogCRUD.add(session, user.id, "monitoring_off", "User stopped monitoring")
 
         await message.answer(
             "⏹ <b>Мониторинг остановлен</b>\n\n"
@@ -265,13 +272,29 @@ async def process_group_message(
         parser = MessageParser(keywords, cities)
         is_order, found_keyword, found_city = parser.check_message(message_text)
 
-        if not is_order:
-            return
-
+        # Get db_group for saving message
         db_groups = await GroupCRUD.get_enabled_groups(session, user.id)
         db_group = next((g for g in db_groups if g.telegram_group_id == group_id), None)
 
         if not db_group:
+            return
+
+        # Save ALL messages to group_messages for admin panel analysis
+        try:
+            await GroupMessageCRUD.add(
+                session,
+                user_id=user.id,
+                group_id=db_group.id,
+                telegram_group_id=group_id,
+                message_id=message_id,
+                message_text=message_text[:2000],  # Limit text length
+                matched_keyword=found_keyword,
+                matched_city=found_city,
+            )
+        except Exception as e:
+            logger.error(f"Error saving group message: {e}")
+
+        if not is_order:
             return
 
         order = await OrderCRUD.create_order(
@@ -281,6 +304,12 @@ async def process_group_message(
             telegram_group_id=group_id,
             message_id=message_id,
             message_text=message_text,
+        )
+
+        # Log order found
+        await UserLogCRUD.add(
+            session, user.id, "order_found",
+            f"keyword={found_keyword}, city={found_city}, group={group_name[:50]}"
         )
 
         notification = parser.format_notification(
@@ -309,3 +338,4 @@ async def process_group_message(
 
         except Exception as e:
             logger.error(f"Error sending notification to user {user_telegram_id}: {e}")
+            await UserLogCRUD.add(session, user.id, "notification_error", str(e))

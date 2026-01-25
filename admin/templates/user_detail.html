@@ -1,0 +1,347 @@
+{% extends "base.html" %}
+
+{% block title %}User {{ user.telegram_id }} - Admin Panel{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mt-3 mb-4">
+    <h2>
+        <a href="{{ url_for('users.users_list') }}" class="text-decoration-none">&larr;</a>
+        User: {{ user.username or user.telegram_id }}
+    </h2>
+    <div>
+        <button class="btn btn-success btn-sm" onclick="extendSubscription({{ user.id }})">
+            <i class="bi bi-calendar-plus"></i> +30 days
+        </button>
+        <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#messageModal">
+            <i class="bi bi-envelope"></i> Message
+        </button>
+        <button class="btn btn-warning btn-sm" onclick="resetSession({{ user.id }})">
+            <i class="bi bi-arrow-repeat"></i> Reset Session
+        </button>
+        {% if user.is_banned %}
+        <button class="btn btn-success btn-sm" onclick="unbanUser({{ user.id }})">
+            <i class="bi bi-check"></i> Unban
+        </button>
+        {% else %}
+        <button class="btn btn-danger btn-sm" onclick="banUser({{ user.id }})">
+            <i class="bi bi-slash-circle"></i> Ban
+        </button>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Main info -->
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">User Info</div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr><th>Internal ID</th><td>{{ user.id }}</td></tr>
+                    <tr><th>Telegram ID</th><td>{{ user.telegram_id }}</td></tr>
+                    <tr><th>Username</th><td>{{ user.username or '-' }}</td></tr>
+                    <tr><th>Phone</th><td>{{ user.phone or '-' }}</td></tr>
+                    <tr><th>Created</th><td>{{ user.created_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>
+                    <tr><th>Updated</th><td>{{ user.updated_at.strftime('%d.%m.%Y %H:%M') }}</td></tr>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">Status</div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr>
+                        <th>Subscription</th>
+                        <td>
+                            {% if user.is_subscription_active %}
+                                <span class="badge bg-success">Active until {{ user.subscription_end.strftime('%d.%m.%Y %H:%M') }}</span>
+                            {% elif user.subscription_end %}
+                                <span class="badge bg-danger">Expired {{ user.subscription_end.strftime('%d.%m.%Y %H:%M') }}</span>
+                            {% else %}
+                                <span class="badge bg-secondary">Never subscribed</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Monitoring</th>
+                        <td>
+                            {% if user.monitoring_enabled %}
+                                <span class="badge bg-success">ON</span>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="toggleMonitoring({{ user.id }}, false)">Turn OFF</button>
+                            {% else %}
+                                <span class="badge bg-secondary">OFF</span>
+                                <button class="btn btn-sm btn-outline-success" onclick="toggleMonitoring({{ user.id }}, true)">Turn ON</button>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Session</th>
+                        <td>
+                            {% if user.session_string %}
+                                <span class="badge bg-success">Authorized</span>
+                            {% else %}
+                                <span class="badge bg-warning">Not authorized</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Status</th>
+                        <td>
+                            {% if user.is_banned %}
+                                <span class="badge bg-danger">Banned</span>
+                            {% elif user.is_active %}
+                                <span class="badge bg-success">Active</span>
+                            {% else %}
+                                <span class="badge bg-secondary">Inactive</span>
+                            {% endif %}
+                            {% if user.is_admin %}
+                                <span class="badge bg-primary">Admin</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Response Text</th>
+                        <td><code>{{ user.response_text or 'Not set' }}</code></td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Monitoring settings -->
+<div class="row mt-3">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">Groups ({{ groups|length }})</div>
+            <div class="card-body" style="max-height: 200px; overflow-y: auto;">
+                {% if groups %}
+                <ul class="list-group list-group-flush">
+                    {% for group in groups %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center py-1">
+                        <small>{{ group.group_name[:30] }}{% if group.group_name|length > 30 %}...{% endif %}</small>
+                        {% if group.is_enabled %}
+                            <span class="badge bg-success">ON</span>
+                        {% else %}
+                            <span class="badge bg-secondary">OFF</span>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted mb-0">No groups</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">Keywords ({{ keywords|length }})</div>
+            <div class="card-body" style="max-height: 200px; overflow-y: auto;">
+                {% if keywords %}
+                    {% for kw in keywords %}
+                        <span class="badge bg-primary me-1 mb-1">{{ kw.word }}</span>
+                    {% endfor %}
+                {% else %}
+                <p class="text-muted mb-0">No keywords</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">Cities ({{ cities|length }})</div>
+            <div class="card-body" style="max-height: 200px; overflow-y: auto;">
+                {% if cities %}
+                    {% for city in cities %}
+                        <span class="badge bg-info me-1 mb-1">{{ city.city_name }}</span>
+                    {% endfor %}
+                {% else %}
+                <p class="text-muted mb-0">No cities (all cities)</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Logs -->
+<div class="card mt-3">
+    <div class="card-header">
+        <i class="bi bi-journal-text"></i> Action Logs ({{ logs|length }})
+    </div>
+    <div class="card-body" style="max-height: 300px; overflow-y: auto;">
+        <table class="table table-sm table-hover">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Action</th>
+                    <th>Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr>
+                    <td><small>{{ log.created_at.strftime('%d.%m %H:%M:%S') }}</small></td>
+                    <td>
+                        <span class="badge {% if 'error' in log.action %}bg-danger{% elif 'success' in log.action or 'confirmed' in log.action %}bg-success{% else %}bg-secondary{% endif %}">
+                            {{ log.action }}
+                        </span>
+                    </td>
+                    <td class="log-details">{{ log.details or '-' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="3" class="text-muted">No logs</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Messages -->
+<div class="card mt-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-chat-dots"></i> Group Messages (last 24h) - {{ messages|length }}</span>
+        <div>
+            <a href="?msg_filter=all" class="btn btn-sm {% if msg_filter == 'all' %}btn-primary{% else %}btn-outline-primary{% endif %}">All</a>
+            <a href="?msg_filter=matched" class="btn btn-sm {% if msg_filter == 'matched' %}btn-success{% else %}btn-outline-success{% endif %}">Matched</a>
+            <a href="?msg_filter=unmatched" class="btn btn-sm {% if msg_filter == 'unmatched' %}btn-secondary{% else %}btn-outline-secondary{% endif %}">Not matched</a>
+        </div>
+    </div>
+    <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+        <table class="table table-sm">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Group</th>
+                    <th>Message</th>
+                    <th>Keyword</th>
+                    <th>City</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for msg in messages %}
+                <tr class="{% if msg.matched_keyword %}matched{% else %}unmatched{% endif %}">
+                    <td><small>{{ msg.created_at.strftime('%d.%m %H:%M') }}</small></td>
+                    <td><small>{{ msg.group.group_name[:20] if msg.group else msg.telegram_group_id }}...</small></td>
+                    <td class="message-text" title="{{ msg.message_text }}">{{ msg.message_text[:80] }}{% if msg.message_text|length > 80 %}...{% endif %}</td>
+                    <td>
+                        {% if msg.matched_keyword %}
+                            <span class="badge bg-success">{{ msg.matched_keyword }}</span>
+                        {% else %}
+                            <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if msg.matched_city %}
+                            <span class="badge bg-info">{{ msg.matched_city }}</span>
+                        {% else %}
+                            <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="text-muted">No messages in last 24 hours</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Orders -->
+<div class="card mt-3">
+    <div class="card-header">
+        <i class="bi bi-cart"></i> Found Orders ({{ orders|length }})
+    </div>
+    <div class="card-body" style="max-height: 300px; overflow-y: auto;">
+        <table class="table table-sm">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Message</th>
+                    <th>Responded</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for order in orders %}
+                <tr>
+                    <td><small>{{ order.created_at.strftime('%d.%m %H:%M') }}</small></td>
+                    <td class="message-text">{{ order.message_text[:100] }}{% if order.message_text|length > 100 %}...{% endif %}</td>
+                    <td>
+                        {% if order.responded %}
+                            <span class="badge bg-success">Yes</span>
+                            <small class="text-muted">{{ order.responded_at.strftime('%H:%M') if order.responded_at else '' }}</small>
+                        {% else %}
+                            <span class="badge bg-warning">No</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="3" class="text-muted">No orders</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Payments -->
+<div class="card mt-3">
+    <div class="card-header">
+        <i class="bi bi-credit-card"></i> Payments ({{ payments|length }})
+    </div>
+    <div class="card-body" style="max-height: 200px; overflow-y: auto;">
+        <table class="table table-sm">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                    <th>Payment ID</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for payment in payments %}
+                <tr>
+                    <td><small>{{ payment.created_at.strftime('%d.%m.%Y %H:%M') }}</small></td>
+                    <td>{{ payment.amount }} RUB</td>
+                    <td>
+                        {% if payment.status == 'confirmed' %}
+                            <span class="badge bg-success">Confirmed</span>
+                        {% else %}
+                            <span class="badge bg-warning">{{ payment.status }}</span>
+                        {% endif %}
+                    </td>
+                    <td><small>{{ payment.payment_id or '-' }}</small></td>
+                </tr>
+                {% else %}
+                <tr><td colspan="4" class="text-muted">No payments</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Message Modal -->
+<div class="modal fade" id="messageModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Send Message to User</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="messageText" class="form-label">Message</label>
+                    <textarea class="form-control" id="messageText" rows="4" placeholder="Enter your message..."></textarea>
+                </div>
+                <small class="text-muted">User can reply with /reply command</small>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="sendMessage({{ user.id }})">Send</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

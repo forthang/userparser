@@ -48,6 +48,28 @@ services:
       timeout: 5s
       retries: 5
 
+  admin:
+    build: .
+    container_name: taxi_parser_admin
+    restart: unless-stopped
+    command: python -m admin.app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${ADMIN_PORT:-5000}:5000"
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-taxi_parser}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ADMIN_SECRET_KEY=${ENCRYPTION_KEY}
+    networks:
+      - bot_network
+
   backup:
     image: postgres:15-alpine
     container_name: taxi_parser_backup
