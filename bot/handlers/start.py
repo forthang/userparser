@@ -615,20 +615,20 @@ async def auth_qr(callback: CallbackQuery, state: FSMContext):
         from aiogram.utils.keyboard import InlineKeyboardBuilder
 
         builder = InlineKeyboardBuilder()
-        builder.row(InlineKeyboardButton(text="✅ Я отсканировал", callback_data="auth_qr_check"))
-        builder.row(InlineKeyboardButton(text="🔄 Новый QR-код", callback_data="auth_qr_refresh"))
+        builder.row(InlineKeyboardButton(text="📲 Войти по ссылке", url=qr_login_url))
+        builder.row(InlineKeyboardButton(text="✅ Я авторизовался", callback_data="auth_qr_check"))
+        builder.row(InlineKeyboardButton(text="🔄 Новый код", callback_data="auth_qr_refresh"))
         builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="auth_qr_cancel"))
 
         # Send the QR code to the user
         await callback.message.answer_photo(
             photo=BufferedInputFile(img_byte_arr.getvalue(), filename='qr_code.png'),
             caption=(
-                '📱 <b>Вход по QR-коду</b>\n\n'
-                '1. Откройте Telegram на телефоне\n'
-                '2. Перейдите в <b>Настройки → Устройства → Подключить устройство</b>\n'
-                '3. Отсканируйте этот QR-код\n'
-                '4. Подтвердите вход на телефоне\n'
-                '5. Нажмите кнопку <b>"Я отсканировал"</b> ниже'
+                '📱 <b>Вход в аккаунт</b>\n\n'
+                '<b>📲 С телефона:</b> нажмите "Войти по ссылке"\n\n'
+                '<b>💻 С компьютера:</b> отсканируйте QR-код\n'
+                '(Telegram → Настройки → Устройства → Подключить)\n\n'
+                'После подтверждения нажмите "Я авторизовался"'
             ),
             parse_mode="HTML",
             reply_markup=builder.as_markup()
@@ -765,19 +765,19 @@ async def auth_qr_refresh(callback: CallbackQuery, state: FSMContext):
         from aiogram.utils.keyboard import InlineKeyboardBuilder
 
         builder = InlineKeyboardBuilder()
-        builder.row(InlineKeyboardButton(text="✅ Я отсканировал", callback_data="auth_qr_check"))
-        builder.row(InlineKeyboardButton(text="🔄 Новый QR-код", callback_data="auth_qr_refresh"))
+        builder.row(InlineKeyboardButton(text="📲 Войти по ссылке", url=qr_login_url))
+        builder.row(InlineKeyboardButton(text="✅ Я авторизовался", callback_data="auth_qr_check"))
+        builder.row(InlineKeyboardButton(text="🔄 Новый код", callback_data="auth_qr_refresh"))
         builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="auth_qr_cancel"))
 
         await callback.message.answer_photo(
             photo=BufferedInputFile(img_byte_arr.getvalue(), filename='qr_code.png'),
             caption=(
-                '📱 <b>Вход по QR-коду</b>\n\n'
-                '1. Откройте Telegram на телефоне\n'
-                '2. Перейдите в <b>Настройки → Устройства → Подключить устройство</b>\n'
-                '3. Отсканируйте этот QR-код\n'
-                '4. Подтвердите вход на телефоне\n'
-                '5. Нажмите кнопку <b>"Я отсканировал"</b> ниже'
+                '📱 <b>Вход в аккаунт</b>\n\n'
+                '<b>📲 С телефона:</b> нажмите "Войти по ссылке"\n\n'
+                '<b>💻 С компьютера:</b> отсканируйте QR-код\n'
+                '(Telegram → Настройки → Устройства → Подключить)\n\n'
+                'После подтверждения нажмите "Я авторизовался"'
             ),
             parse_mode="HTML",
             reply_markup=builder.as_markup()
