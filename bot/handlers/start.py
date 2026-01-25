@@ -712,18 +712,22 @@ async def auth_qr_check(callback: CallbackQuery, state: FSMContext):
             builder.row(InlineKeyboardButton(text="🔄 Новый QR-код", callback_data="auth_qr"))
             builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="auth_qr_cancel"))
 
-            await callback.message.edit_caption(
-                caption=(
-                    '📱 <b>Вход по QR-коду</b>\n\n'
-                    '⚠️ <b>QR-код ещё не подтверждён</b>\n\n'
-                    'Убедитесь, что вы:\n'
-                    '1. Отсканировали код в Telegram на телефоне\n'
-                    '2. Подтвердили вход во всплывающем окне\n\n'
-                    'Если QR-код не работает, нажмите "Новый QR-код"'
-                ),
-                parse_mode="HTML",
-                reply_markup=builder.as_markup()
-            )
+            try:
+                await callback.message.edit_caption(
+                    caption=(
+                        '📱 <b>Вход по QR-коду</b>\n\n'
+                        '⚠️ <b>QR-код ещё не подтверждён</b>\n\n'
+                        'Убедитесь, что вы:\n'
+                        '1. Отсканировали код в Telegram на телефоне\n'
+                        '2. Подтвердили вход во всплывающем окне\n\n'
+                        'Если QR-код не работает, нажмите "Новый QR-код"'
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=builder.as_markup()
+                )
+            except Exception:
+                # Сообщение уже с таким текстом
+                await callback.answer("QR-код ещё не подтверждён. Отсканируйте и подтвердите вход.", show_alert=True)
 
     except Exception as e:
         logger.error(f'QR check error for user {callback.from_user.id}: {e}')

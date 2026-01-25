@@ -324,12 +324,36 @@ class UserBotService:
 
             if isinstance(result, types.auth.LoginTokenSuccess):
                 logger.info(f"QR login success for user {user_id}")
-                session_string = await client.export_session_string()
-                # Очищаем клиент после успеха
-                if client.is_connected:
-                    await client.disconnect()
-                cls.cleanup_auth(user_id)
-                return {"success": True, "session_string": session_string, "need_2fa": False}
+
+                # Извлекаем user_id из authorization
+                auth = result.authorization
+                if isinstance(auth, types.auth.Authorization):
+                    tg_user = auth.user
+                    tg_user_id = tg_user.id
+
+                    # Сохраняем user_id в storage для корректного экспорта сессии
+                    await client.storage.user_id(tg_user_id)
+                    await client.storage.is_bot(False)
+
+                    logger.info(f"Authorized as user {tg_user_id}")
+
+                try:
+                    session_string = await client.export_session_string()
+                    logger.info(f"Session exported successfully for user {user_id}")
+
+                    # Очищаем клиент после успеха
+                    if client.is_connected:
+                        await client.disconnect()
+                    cls.cleanup_auth(user_id)
+                    return {"success": True, "session_string": session_string, "need_2fa": False}
+
+                except Exception as e:
+                    logger.error(f"Export session error: {e}")
+                    # Пробуем альтернативный способ - пересоздать клиент
+                    if client.is_connected:
+                        await client.disconnect()
+                    cls.cleanup_auth(user_id)
+                    return {"success": False, "error": f"Session export failed: {e}"}
 
             elif isinstance(result, types.auth.LoginTokenMigrateTo):
                 logger.info(f"QR login migration to DC {result.dc_id}")
@@ -340,12 +364,23 @@ class UserBotService:
                     logger.info(f"Import result: {type(import_result).__name__}")
 
                     if isinstance(import_result, types.auth.LoginTokenSuccess):
+                        auth = import_result.authorization
+                        if isinstance(auth, types.auth.Authorization):
+                            tg_user = auth.user
+                            await client.storage.user_id(tg_user.id)
+                            await client.storage.is_bot(False)
+
                         session_string = await client.export_session_string()
                         if client.is_connected:
                             await client.disconnect()
                         cls.cleanup_auth(user_id)
                         return {"success": True, "session_string": session_string, "need_2fa": False}
+
                     elif isinstance(import_result, types.auth.Authorization):
+                        tg_user = import_result.user
+                        await client.storage.user_id(tg_user.id)
+                        await client.storage.is_bot(False)
+
                         session_string = await client.export_session_string()
                         if client.is_connected:
                             await client.disconnect()
