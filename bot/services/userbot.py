@@ -225,7 +225,7 @@ class UserBotService:
             raise Exception("Failed to export login token")
 
     @classmethod
-    async def wait_for_qr_login(cls, user_id: int, api_id: int, api_hash: str, timeout: int = 60) -> Dict[str, Any]:
+    async def wait_for_qr_login(cls, user_id: int, api_id: int, api_hash: str, timeout: int = 120) -> Dict[str, Any]:
         """Ожидает входа по QR-коду и возвращает результат."""
         if user_id not in _auth_clients:
             return {"success": False, "error": "No auth client found"}
@@ -234,11 +234,14 @@ class UserBotService:
 
         try:
             start_time = asyncio.get_event_loop().time()
+            poll_count = 0
 
             while True:
                 elapsed = asyncio.get_event_loop().time() - start_time
                 if elapsed > timeout:
                     return {"success": False, "error": "timeout"}
+
+                poll_count += 1
 
                 try:
                     result = await client.invoke(
@@ -249,50 +252,48 @@ class UserBotService:
                         )
                     )
 
+                    result_type = type(result).__name__
+                    logger.info(f"QR poll #{poll_count} for user {user_id}: {result_type}")
+
                     if isinstance(result, types.auth.LoginTokenSuccess):
-                        # Successfully logged in
+                        logger.info(f"QR login success for user {user_id}")
                         session_string = await client.export_session_string()
                         return {"success": True, "session_string": session_string, "need_2fa": False}
 
                     elif isinstance(result, types.auth.LoginTokenMigrateTo):
-                        # Need to migrate to another DC
-                        await client.disconnect()
+                        logger.info(f"QR login migration required to DC {result.dc_id}")
+                        try:
+                            import_result = await client.invoke(
+                                functions.auth.ImportLoginToken(token=result.token)
+                            )
+                            logger.info(f"Import result: {type(import_result).__name__}")
 
-                        client = Client(
-                            name=f"auth_{user_id}",
-                            api_id=api_id,
-                            api_hash=api_hash,
-                            app_version="Telegram Android 10.0.0",
-                            device_model="Android 13",
-                            system_version="SDK 33",
-                            lang_code="en",
-                        )
-                        await client.connect()
-                        _auth_clients[user_id] = client
+                            if isinstance(import_result, types.auth.LoginTokenSuccess):
+                                session_string = await client.export_session_string()
+                                return {"success": True, "session_string": session_string, "need_2fa": False}
+                            elif isinstance(import_result, types.auth.Authorization):
+                                session_string = await client.export_session_string()
+                                return {"success": True, "session_string": session_string, "need_2fa": False}
 
-                        # Import the token on the new DC
-                        import_result = await client.invoke(
-                            functions.auth.ImportLoginToken(token=result.token)
-                        )
-
-                        if isinstance(import_result, types.auth.LoginTokenSuccess):
-                            session_string = await client.export_session_string()
-                            return {"success": True, "session_string": session_string, "need_2fa": False}
-                        elif isinstance(import_result, types.auth.Authorization):
-                            session_string = await client.export_session_string()
-                            return {"success": True, "session_string": session_string, "need_2fa": False}
+                        except Exception as e:
+                            error_str = str(e).lower()
+                            logger.error(f"Import token error: {e}")
+                            if "session_password_needed" in error_str:
+                                return {"success": False, "need_2fa": True}
+                            raise
 
                     elif isinstance(result, types.auth.LoginToken):
-                        # Token refreshed, still waiting - generate new QR URL
+                        # Ещё ждём - токен просто обновился
                         pass
 
                 except Exception as e:
                     error_str = str(e).lower()
-                    if "session_password_needed" in error_str or "password" in error_str:
+                    logger.error(f"QR poll error: {e}")
+                    if "session_password_needed" in error_str:
                         return {"success": False, "need_2fa": True}
-                    logger.debug(f"QR poll error (may be normal): {e}")
+                    # Продолжаем попытки при других ошибках
 
-                await asyncio.sleep(2)
+                await asyncio.sleep(1.5)
 
         except Exception as e:
             logger.error(f"QR login wait error for user {user_id}: {e}")
@@ -301,6 +302,76 @@ class UserBotService:
             if client.is_connected:
                 await client.disconnect()
             cls.cleanup_auth(user_id)
+
+    @classmethod
+    async def check_qr_login(cls, user_id: int, api_id: int, api_hash: str) -> Dict[str, Any]:
+        """Проверяет статус QR-авторизации (вызывается после сканирования)."""
+        if user_id not in _auth_clients:
+            return {"success": False, "error": "No auth client found"}
+
+        client = _auth_clients[user_id]
+
+        try:
+            result = await client.invoke(
+                functions.auth.ExportLoginToken(
+                    api_id=api_id,
+                    api_hash=api_hash,
+                    except_ids=[]
+                )
+            )
+
+            logger.info(f"QR check for user {user_id}: {type(result).__name__}")
+
+            if isinstance(result, types.auth.LoginTokenSuccess):
+                logger.info(f"QR login success for user {user_id}")
+                session_string = await client.export_session_string()
+                # Очищаем клиент после успеха
+                if client.is_connected:
+                    await client.disconnect()
+                cls.cleanup_auth(user_id)
+                return {"success": True, "session_string": session_string, "need_2fa": False}
+
+            elif isinstance(result, types.auth.LoginTokenMigrateTo):
+                logger.info(f"QR login migration to DC {result.dc_id}")
+                try:
+                    import_result = await client.invoke(
+                        functions.auth.ImportLoginToken(token=result.token)
+                    )
+                    logger.info(f"Import result: {type(import_result).__name__}")
+
+                    if isinstance(import_result, types.auth.LoginTokenSuccess):
+                        session_string = await client.export_session_string()
+                        if client.is_connected:
+                            await client.disconnect()
+                        cls.cleanup_auth(user_id)
+                        return {"success": True, "session_string": session_string, "need_2fa": False}
+                    elif isinstance(import_result, types.auth.Authorization):
+                        session_string = await client.export_session_string()
+                        if client.is_connected:
+                            await client.disconnect()
+                        cls.cleanup_auth(user_id)
+                        return {"success": True, "session_string": session_string, "need_2fa": False}
+
+                except Exception as e:
+                    error_str = str(e).lower()
+                    logger.error(f"Import token error: {e}")
+                    if "session_password_needed" in error_str:
+                        return {"success": False, "need_2fa": True}
+                    raise
+
+            elif isinstance(result, types.auth.LoginToken):
+                # Токен ещё активен, но вход не подтверждён
+                logger.info(f"QR token still waiting for user {user_id}")
+                return {"success": False, "error": "not_confirmed"}
+
+            return {"success": False, "error": "unknown_state"}
+
+        except Exception as e:
+            error_str = str(e).lower()
+            logger.error(f"QR check error: {e}")
+            if "session_password_needed" in error_str:
+                return {"success": False, "need_2fa": True}
+            return {"success": False, "error": str(e)}
 
     @classmethod
     async def refresh_qr_token(cls, user_id: int, api_id: int, api_hash: str) -> Optional[str]:
