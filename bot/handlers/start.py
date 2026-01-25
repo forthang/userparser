@@ -4,6 +4,9 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery
+import qrcode
+import io
+from aiogram.types import BufferedInputFile
 
 from bot.database.connection import async_session
 
@@ -563,7 +566,7 @@ async def settings_back(callback: CallbackQuery):
             f"<i>{response_text}</i>"
         )
 
-        from aiogram.types import InlineKeyboardButton
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         from aiogram.utils.keyboard import InlineKeyboardBuilder
 
         builder = InlineKeyboardBuilder()
@@ -582,3 +585,60 @@ async def settings_back(callback: CallbackQuery):
         )
 
         await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
+
+@router.callback_query(F.data == 'auth_qr')
+async def auth_qr(callback: CallbackQuery, state: FSMContext):
+    await callback.answer('Генерирую QR-код...')
+
+    try:
+        # Get the QR code login URL from the service
+        qr_login_url = await UserBotService.get_qr_login_url(
+            user_id=callback.from_user.id,
+            api_id=config.telegram_api.api_id,
+            api_hash=config.telegram_api.api_hash
+        )
+
+        # Generate QR code image
+        qr_image = qrcode.make(qr_login_url)
+        
+        # Save image to a byte stream
+        img_byte_arr = io.BytesIO()
+        qr_image.save(img_byte_arr, format='PNG')
+        img_byte_arr.seek(0)
+        
+        # Send the QR code to the user
+        await callback.message.answer_photo(
+            photo=BufferedInputFile(img_byte_arr.getvalue(), filename='qr_code.png'),
+            caption='Отсканируйте этот QR-код в приложении Telegram, чтобы войти.\n\nНастройки > Устройства > Подключить устройство'
+        )
+
+        # Wait for the user to log in
+        status_msg = await callback.message.answer('Ожидаю подтверждения входа...')
+        
+        session_string = await UserBotService.wait_for_qr_login(callback.from_user.id)
+
+        if session_string:
+            async with async_session() as session:
+                user = await UserCRUD.get_by_telegram_id(session, callback.from_user.id)
+                if user:
+                    await UserCRUD.update_session(session, user.id, session_string, None) # No phone number with QR login
+
+            await state.clear()
+            await status_msg.edit_text(
+                '✅ Авторизация успешна!\n\nТеперь вы можете настроить бота и запустить мониторинг.'
+            )
+            async with async_session() as session:
+                user = await UserCRUD.get_by_telegram_id(session, callback.from_user.id)
+                await callback.message.answer(
+                    'Главное меню:',
+                    reply_markup=get_main_menu(user.monitoring_enabled if user else False),
+                )
+        else:
+            await status_msg.edit_text('❌ Не удалось войти по QR-коду. Попробуйте еще раз.')
+
+    except Exception as e:
+        logger.error(f'QR auth error for user {callback.from_user.id}: {e}')
+        await callback.message.answer(
+            '❌ Произошла ошибка при генерации QR-кода. Попробуйте еще раз.',
+            reply_markup=get_auth_keyboard(),
+        )

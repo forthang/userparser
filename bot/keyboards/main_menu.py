@@ -40,7 +40,8 @@ def get_main_menu(monitoring_enabled: bool = False) -> ReplyKeyboardMarkup:
 def get_auth_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="📱 Авторизоваться", callback_data="auth_start")
+        InlineKeyboardButton(text="📱 Авторизоваться", callback_data="auth_start"),
+        InlineKeyboardButton(text="📷 Войти по QR", callback_data="auth_qr")
     )
     return builder.as_markup()
 
