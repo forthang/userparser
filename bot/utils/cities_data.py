@@ -180,10 +180,25 @@ def generate_variations(city_name: str) -> List[str]:
 
 
 def search_city_in_text(text: str, city_variations: List[str]) -> bool:
+    """
+    Поиск города в тексте с учётом:
+    - г.Курск, г. Курск, г Курск
+    - Курск., Курск,, Курск!
+    - в Курске, из Курска
+    - КУРСК, курск, КуРсК
+    """
+    import re
+
     text_lower = text.lower()
+    # Нормализуем текст - добавляем пробелы по краям для корректного поиска
+    text_normalized = ' ' + text_lower + ' '
 
     for variation in city_variations:
-        if variation.lower() in text_lower:
+        var_lower = variation.lower()
+        # Паттерн: слово окружено НЕ-буквами (кириллица/латиница) и НЕ-цифрами
+        # Это позволяет найти: "г.Курск", "Курск.", "Курск,", "(Курск)" и т.д.
+        pattern = rf'(?<![а-яёa-z0-9]){re.escape(var_lower)}(?![а-яёa-z0-9])'
+        if re.search(pattern, text_normalized):
             return True
 
     return False

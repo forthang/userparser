@@ -151,16 +151,6 @@ async def subscription_buy(callback: CallbackQuery):
                 url=payment_result["payment_url"]
             )
         )
-
-        # Кнопка проверки для ЮКассы и Тинькофф (Робокасса проверяется через webhook)
-        if settings["system"] in (PaymentSystem.YUKASSA, PaymentSystem.TINKOFF):
-            builder.row(
-                InlineKeyboardButton(
-                    text="🔄 Проверить оплату",
-                    callback_data=f"sub_check:{payment_result['payment_id']}"
-                )
-            )
-
         builder.row(
             InlineKeyboardButton(text="❌ Отмена", callback_data="sub_cancel")
         )
@@ -177,7 +167,7 @@ async def subscription_buy(callback: CallbackQuery):
             f"📆 Срок: <b>{settings['days']} дней</b>\n"
             f"🏦 Система: {system_names.get(settings['system'], 'Неизвестно')}\n\n"
             f"Нажмите кнопку «Оплатить» для перехода на страницу оплаты.\n\n"
-            f"<i>После оплаты вернитесь в бот и нажмите «Проверить оплату»</i>",
+            f"<i>После оплаты подписка активируется автоматически</i>",
             parse_mode="HTML",
             reply_markup=builder.as_markup(),
         )

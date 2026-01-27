@@ -40,6 +40,20 @@
                     <i class="bi bi-people"></i> Users
                 </a>
                 <hr class="bg-secondary">
+                <small class="text-muted px-3">Shared Pool</small>
+                <a href="{{ url_for('pool.index') }}" class="{% if request.endpoint == 'pool.index' %}active{% endif %}">
+                    <i class="bi bi-hdd-stack"></i> Pool Overview
+                </a>
+                <a href="{{ url_for('pool.workers') }}" class="{% if 'pool.worker' in request.endpoint %}active{% endif %}">
+                    <i class="bi bi-cpu"></i> Workers
+                </a>
+                <a href="{{ url_for('pool.groups') }}" class="{% if 'pool.group' in request.endpoint %}active{% endif %}">
+                    <i class="bi bi-chat-dots"></i> Groups
+                </a>
+                <a href="{{ url_for('pool.deliveries') }}" class="{% if request.endpoint == 'pool.deliveries' %}active{% endif %}">
+                    <i class="bi bi-send"></i> Deliveries
+                </a>
+                <hr class="bg-secondary">
                 <a href="{{ url_for('dashboard.logout') }}">
                     <i class="bi bi-box-arrow-right"></i> Logout
                 </a>

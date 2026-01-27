@@ -12,6 +12,7 @@ from bot.services.scheduler import get_scheduler
 from bot.handlers import start, groups, keywords, cities, monitoring, subscription, admin, reply
 from bot.handlers.monitoring import process_group_message, set_bot_instance
 from userbot.client import userbot_pool
+from userbot.shared_pool import shared_pool, GroupDistributor
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,6 +34,10 @@ async def on_startup(bot: Bot):
     await scheduler.start()
     logger.info("Scheduler started")
 
+    # Запускаем shared pool (если есть воркеры)
+    await start_shared_pool(bot)
+
+    # Запускаем per-user userbots (для откликов)
     await start_active_userbots(bot)
     logger.info("Active userbots started")
 
@@ -43,9 +48,35 @@ async def on_shutdown(bot: Bot):
     scheduler = get_scheduler(bot)
     await scheduler.stop()
 
+    # Останавливаем shared pool
+    await shared_pool.stop_all()
+
+    # Останавливаем per-user userbots
     await userbot_pool.stop_all()
 
     logger.info("Bot shutdown complete")
+
+
+async def start_shared_pool(bot: Bot):
+    """Запуск shared monitoring pool"""
+    try:
+        # Устанавливаем Bot instance для отправки уведомлений
+        shared_pool.set_bot(bot)
+
+        # Перераспределяем группы если нужно
+        await GroupDistributor.redistribute_groups()
+
+        # Запускаем всех воркеров
+        await shared_pool.start_all_workers()
+
+        workers_count = shared_pool.get_active_workers_count()
+        if workers_count > 0:
+            logger.info(f"Shared pool started with {workers_count} workers")
+        else:
+            logger.info("No shared pool workers configured")
+
+    except Exception as e:
+        logger.error(f"Error starting shared pool: {e}")
 
 
 async def start_active_userbots(bot: Bot):

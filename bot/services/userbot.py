@@ -131,13 +131,15 @@ class UserBotService:
 
         client = _auth_clients[user_id]
 
-        try:
-            await client.check_password(password)
-            session_string = await client.export_session_string()
-            return session_string
-        finally:
-            # Очищаем клиент после проверки пароля
-            cls.cleanup_auth(user_id)
+        # Не используем finally - при неправильном пароле клиент должен остаться,
+        # чтобы пользователь мог попробовать ввести пароль ещё раз
+        await client.check_password(password)
+        session_string = await client.export_session_string()
+
+        # Очищаем только после успешной авторизации
+        cls.cleanup_auth(user_id)
+
+        return session_string
 
     @classmethod
     def cleanup_auth(cls, user_id: int):

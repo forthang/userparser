@@ -1,4 +1,5 @@
 import os
+import psycopg2
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 from sqlalchemy import create_engine, select, delete, update, String, or_, cast
@@ -6,7 +7,8 @@ from sqlalchemy.orm import sessionmaker, joinedload
 
 from bot.database.models import (
     User, Group, Keyword, City, Payment, Order,
-    UserLog, GroupMessage, Base
+    UserLog, GroupMessage, Base,
+    MonitorWorker, GroupAssignment, SharedGroupMessage, OrderDelivery
 )
 
 # Database URL
@@ -20,6 +22,17 @@ DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NA
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 Session = sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def get_db_connection():
+    """Get raw psycopg2 connection for webhook handlers"""
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+    )
 
 
 @contextmanager
@@ -319,3 +332,275 @@ def toggle_monitoring(user_id: int, enabled: bool):
             session.commit()
             return True
     return False
+
+
+# ============ Shared Pool operations ============
+
+def get_all_workers():
+    """Get all monitor workers"""
+    with get_session() as session:
+        result = session.execute(
+            select(MonitorWorker).order_by(MonitorWorker.name)
+        )
+        return list(result.scalars().all())
+
+
+def get_worker_by_id(worker_id: int):
+    """Get worker by ID"""
+    with get_session() as session:
+        return session.get(MonitorWorker, worker_id)
+
+
+def get_worker_assignments(worker_id: int):
+    """Get groups assigned to worker"""
+    with get_session() as session:
+        result = session.execute(
+            select(GroupAssignment)
+            .where(GroupAssignment.worker_id == worker_id)
+            .order_by(GroupAssignment.group_name)
+        )
+        return list(result.scalars().all())
+
+
+def get_all_group_assignments():
+    """Get all group assignments with worker info"""
+    with get_session() as session:
+        result = session.execute(
+            select(GroupAssignment, MonitorWorker)
+            .join(MonitorWorker, GroupAssignment.worker_id == MonitorWorker.id)
+            .order_by(GroupAssignment.group_name)
+        )
+        return [(a, w) for a, w in result.fetchall()]
+
+
+def create_worker(name: str, session_string: str, phone: str = None, max_groups: int = 50):
+    """Create new monitor worker"""
+    with get_session() as session:
+        worker = MonitorWorker(
+            name=name,
+            session_string=session_string,
+            phone=phone,
+            max_groups=max_groups,
+        )
+        session.add(worker)
+        session.commit()
+        return worker
+
+
+def update_worker(worker_id: int, **kwargs):
+    """Update worker fields"""
+    with get_session() as session:
+        worker = session.get(MonitorWorker, worker_id)
+        if worker:
+            for key, value in kwargs.items():
+                if hasattr(worker, key):
+                    setattr(worker, key, value)
+            session.commit()
+            return True
+    return False
+
+
+def delete_worker(worker_id: int):
+    """Delete worker"""
+    with get_session() as session:
+        result = session.execute(
+            delete(MonitorWorker).where(MonitorWorker.id == worker_id)
+        )
+        session.commit()
+        return result.rowcount > 0
+
+
+def get_shared_pool_stats():
+    """Get shared pool statistics"""
+    with get_session() as session:
+        workers = session.execute(select(MonitorWorker)).scalars().all()
+
+        stats = {
+            'total_workers': len(workers),
+            'active_workers': len([w for w in workers if w.is_active]),
+            'workers_with_errors': len([w for w in workers if w.last_error]),
+            'workers': [],
+        }
+
+        for worker in workers:
+            assignments = session.execute(
+                select(GroupAssignment)
+                .where(GroupAssignment.worker_id == worker.id)
+            ).scalars().all()
+
+            stats['workers'].append({
+                'id': worker.id,
+                'name': worker.name,
+                'phone': worker.phone,
+                'is_active': worker.is_active,
+                'groups_count': len(assignments),
+                'max_groups': worker.max_groups,
+                'last_error': worker.last_error,
+                'last_active_at': worker.last_active_at,
+            })
+
+        stats['total_groups'] = sum(w['groups_count'] for w in stats['workers'])
+        return stats
+
+
+# ============ Shared Group Messages (Chat History) ============
+
+def get_monitored_groups():
+    """Get list of all monitored groups with stats"""
+    with get_session() as session:
+        threshold = datetime.utcnow() - timedelta(hours=24)
+
+        # Get unique groups from assignments
+        assignments = session.execute(
+            select(GroupAssignment, MonitorWorker)
+            .join(MonitorWorker, GroupAssignment.worker_id == MonitorWorker.id)
+            .where(GroupAssignment.is_active == True)
+        ).fetchall()
+
+        groups = []
+        for assignment, worker in assignments:
+            # Count messages
+            msg_count = session.execute(
+                select(SharedGroupMessage)
+                .where(
+                    SharedGroupMessage.telegram_group_id == assignment.telegram_group_id,
+                    SharedGroupMessage.created_at >= threshold
+                )
+            ).scalars().all()
+
+            # Count deliveries (orders sent to users)
+            msg_ids = [m.id for m in msg_count]
+            deliveries_count = 0
+            if msg_ids:
+                deliveries = session.execute(
+                    select(OrderDelivery)
+                    .where(OrderDelivery.shared_message_id.in_(msg_ids))
+                ).scalars().all()
+                deliveries_count = len(deliveries)
+
+            groups.append({
+                'telegram_group_id': assignment.telegram_group_id,
+                'group_name': assignment.group_name,
+                'worker_id': worker.id,
+                'worker_name': worker.name,
+                'messages_24h': len(msg_count),
+                'orders_sent': deliveries_count,
+            })
+
+        return groups
+
+
+def get_group_chat_history(telegram_group_id: int, limit: int = 500):
+    """Get chat history for a specific group"""
+    with get_session() as session:
+        threshold = datetime.utcnow() - timedelta(hours=24)
+
+        messages = session.execute(
+            select(SharedGroupMessage)
+            .where(
+                SharedGroupMessage.telegram_group_id == telegram_group_id,
+                SharedGroupMessage.created_at >= threshold
+            )
+            .order_by(SharedGroupMessage.created_at.desc())
+            .limit(limit)
+        ).scalars().all()
+
+        result = []
+        for msg in messages:
+            # Get deliveries for this message
+            deliveries = session.execute(
+                select(OrderDelivery, User)
+                .join(User, OrderDelivery.user_id == User.id)
+                .where(OrderDelivery.shared_message_id == msg.id)
+            ).fetchall()
+
+            result.append({
+                'id': msg.id,
+                'message_id': msg.message_id,
+                'message_text': msg.message_text,
+                'sender_id': msg.sender_id,
+                'sender_username': msg.sender_username,
+                'created_at': msg.created_at,
+                'deliveries': [
+                    {
+                        'user_id': user.id,
+                        'telegram_id': user.telegram_id,
+                        'username': user.username,
+                        'keyword': delivery.matched_keyword,
+                        'city': delivery.matched_city,
+                    }
+                    for delivery, user in deliveries
+                ]
+            })
+
+        return result
+
+
+def get_group_info(telegram_group_id: int):
+    """Get info about a specific group"""
+    with get_session() as session:
+        assignment = session.execute(
+            select(GroupAssignment, MonitorWorker)
+            .join(MonitorWorker, GroupAssignment.worker_id == MonitorWorker.id)
+            .where(GroupAssignment.telegram_group_id == telegram_group_id)
+        ).first()
+
+        if not assignment:
+            return None
+
+        group_assignment, worker = assignment
+
+        # Count users monitoring this group
+        users = session.execute(
+            select(User, Group)
+            .join(Group, User.id == Group.user_id)
+            .where(
+                Group.telegram_group_id == telegram_group_id,
+                Group.is_enabled == True,
+                User.monitoring_enabled == True
+            )
+        ).fetchall()
+
+        return {
+            'telegram_group_id': telegram_group_id,
+            'group_name': group_assignment.group_name,
+            'worker_id': worker.id,
+            'worker_name': worker.name,
+            'users_monitoring': [
+                {'id': user.id, 'telegram_id': user.telegram_id, 'username': user.username}
+                for user, group in users
+            ],
+        }
+
+
+# ============ Order Deliveries ============
+
+def get_recent_deliveries(limit: int = 100):
+    """Get recent order deliveries"""
+    with get_session() as session:
+        threshold = datetime.utcnow() - timedelta(hours=24)
+
+        result = session.execute(
+            select(OrderDelivery, SharedGroupMessage, User)
+            .join(SharedGroupMessage, OrderDelivery.shared_message_id == SharedGroupMessage.id)
+            .join(User, OrderDelivery.user_id == User.id)
+            .where(OrderDelivery.delivered_at >= threshold)
+            .order_by(OrderDelivery.delivered_at.desc())
+            .limit(limit)
+        ).fetchall()
+
+        return [
+            {
+                'id': delivery.id,
+                'user_id': user.id,
+                'telegram_id': user.telegram_id,
+                'username': user.username,
+                'group_name': msg.group_name,
+                'telegram_group_id': msg.telegram_group_id,
+                'keyword': delivery.matched_keyword,
+                'city': delivery.matched_city,
+                'message_text': msg.message_text[:200] + '...' if len(msg.message_text) > 200 else msg.message_text,
+                'delivered_at': delivery.delivered_at,
+            }
+            for delivery, msg, user in result
+        ]

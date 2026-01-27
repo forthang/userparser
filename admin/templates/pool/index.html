@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}Shared Pool - Admin Panel{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-hdd-stack"></i> Shared Pool Overview</h2>
+    <button class="btn btn-primary" onclick="redistributeGroups()">
+        <i class="bi bi-shuffle"></i> Redistribute Groups
+    </button>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3>{{ stats.total_workers }}</h3>
+                <small class="text-muted">Total Workers</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="text-success">{{ stats.active_workers }}</h3>
+                <small class="text-muted">Active Workers</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3>{{ stats.total_groups }}</h3>
+                <small class="text-muted">Total Groups</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="text-danger">{{ stats.workers_with_errors }}</h3>
+                <small class="text-muted">With Errors</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-cpu"></i> Workers Distribution
+    </div>
+    <div class="card-body">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>Worker</th>
+                    <th>Phone</th>
+                    <th>Status</th>
+                    <th>Groups</th>
+                    <th>Last Active</th>
+                    <th>Error</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for w in stats.workers %}
+                <tr>
+                    <td>
+                        <a href="{{ url_for('pool.worker_detail', worker_id=w.id) }}">
+                            {{ w.name }}
+                        </a>
+                    </td>
+                    <td>{{ w.phone or '-' }}</td>
+                    <td>
+                        {% if w.is_active %}
+                            <span class="badge bg-success">Active</span>
+                        {% else %}
+                            <span class="badge bg-danger">Inactive</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge bg-primary">{{ w.groups_count }} / {{ w.max_groups }}</span>
+                    </td>
+                    <td>
+                        {% if w.last_active_at %}
+                            {{ w.last_active_at.strftime('%d.%m %H:%M') }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if w.last_error %}
+                            <span class="text-danger" title="{{ w.last_error }}">
+                                {{ w.last_error[:30] }}...
+                            </span>
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{{ url_for('pool.worker_detail', worker_id=w.id) }}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i>
+                        </a>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" class="text-center text-muted">No workers configured</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function redistributeGroups() {
+    if (!confirm('Redistribute all groups across workers? This will reassign all groups evenly.')) return;
+
+    try {
+        const result = await apiCall('/pool/api/redistribute');
+        alert(result.success ? result.message : result.error);
+        if (result.success) location.reload();
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+</script>
+{% endblock %}

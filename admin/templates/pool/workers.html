@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block title %}Workers - Admin Panel{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-cpu"></i> Monitor Workers</h2>
+    <a href="{{ url_for('pool.add_worker') }}" class="btn btn-success">
+        <i class="bi bi-plus-lg"></i> Add Worker
+    </a>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>Phone</th>
+                    <th>Status</th>
+                    <th>Max Groups</th>
+                    <th>Last Active</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for worker in workers %}
+                <tr>
+                    <td>{{ worker.id }}</td>
+                    <td>
+                        <a href="{{ url_for('pool.worker_detail', worker_id=worker.id) }}">
+                            {{ worker.name }}
+                        </a>
+                    </td>
+                    <td>{{ worker.phone or '-' }}</td>
+                    <td>
+                        {% if worker.is_active %}
+                            <span class="badge bg-success">Active</span>
+                        {% else %}
+                            <span class="badge bg-danger">Inactive</span>
+                        {% endif %}
+                        {% if worker.last_error %}
+                            <i class="bi bi-exclamation-triangle text-warning" title="{{ worker.last_error }}"></i>
+                        {% endif %}
+                    </td>
+                    <td>{{ worker.max_groups }}</td>
+                    <td>
+                        {% if worker.last_active_at %}
+                            {{ worker.last_active_at.strftime('%d.%m.%Y %H:%M') }}
+                        {% else %}
+                            Never
+                        {% endif %}
+                    </td>
+                    <td>{{ worker.created_at.strftime('%d.%m.%Y') }}</td>
+                    <td>
+                        <div class="btn-group btn-group-sm">
+                            <a href="{{ url_for('pool.worker_detail', worker_id=worker.id) }}" class="btn btn-outline-primary">
+                                <i class="bi bi-eye"></i>
+                            </a>
+                            <button class="btn btn-outline-{{ 'danger' if worker.is_active else 'success' }}"
+                                    onclick="toggleWorker({{ worker.id }})">
+                                <i class="bi bi-{{ 'pause' if worker.is_active else 'play' }}"></i>
+                            </button>
+                            <button class="btn btn-outline-danger" onclick="deleteWorker({{ worker.id }})">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="8" class="text-center text-muted">
+                        No workers configured.
+                        <a href="{{ url_for('pool.add_worker') }}">Add one</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function toggleWorker(workerId) {
+    if (!confirm('Toggle worker status?')) return;
+    const result = await apiCall(`/pool/api/workers/${workerId}/toggle`);
+    alert(result.success ? 'Status updated' : result.error);
+    if (result.success) location.reload();
+}
+
+async function deleteWorker(workerId) {
+    if (!confirm('Delete this worker? All assigned groups will be unassigned.')) return;
+    const result = await apiCall(`/pool/api/workers/${workerId}`, 'DELETE');
+    alert(result.success ? 'Worker deleted' : result.error);
+    if (result.success) location.reload();
+}
+</script>
+{% endblock %}

@@ -222,6 +222,85 @@ class BotSettings(Base):
         return f"<BotSettings(key={self.key})>"
 
 
+# ============ Shared Monitoring Pool ============
+
+class MonitorWorker(Base):
+    """Воркер-аккаунт для мониторинга групп (общий пул)"""
+    __tablename__ = "monitor_workers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)  # Название воркера
+    phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    session_string: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    max_groups: Mapped[int] = mapped_column(Integer, default=50)  # Лимит групп на воркера
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_active_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    assignments: Mapped[List["GroupAssignment"]] = relationship(
+        "GroupAssignment", back_populates="worker", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<MonitorWorker(id={self.id}, name={self.name})>"
+
+
+class GroupAssignment(Base):
+    """Назначение группы на воркера"""
+    __tablename__ = "group_assignments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    worker_id: Mapped[int] = mapped_column(Integer, ForeignKey("monitor_workers.id", ondelete="CASCADE"))
+    telegram_group_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    group_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    worker: Mapped["MonitorWorker"] = relationship("MonitorWorker", back_populates="assignments")
+
+    def __repr__(self) -> str:
+        return f"<GroupAssignment(worker={self.worker_id}, group={self.telegram_group_id})>"
+
+
+class SharedGroupMessage(Base):
+    """Все сообщения из общего пула (для истории по группам)"""
+    __tablename__ = "shared_group_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    worker_id: Mapped[int] = mapped_column(Integer, ForeignKey("monitor_workers.id", ondelete="CASCADE"))
+    telegram_group_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    group_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_text: Mapped[str] = mapped_column(Text, nullable=False)
+    sender_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    sender_username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+    worker: Mapped["MonitorWorker"] = relationship("MonitorWorker")
+
+    def __repr__(self) -> str:
+        return f"<SharedGroupMessage(id={self.id}, group={self.telegram_group_id})>"
+
+
+class OrderDelivery(Base):
+    """Доставка заказов пользователям (какие заказы кому отправились)"""
+    __tablename__ = "order_deliveries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    shared_message_id: Mapped[int] = mapped_column(Integer, ForeignKey("shared_group_messages.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    matched_keyword: Mapped[str] = mapped_column(String(255), nullable=False)
+    matched_city: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    delivered_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    shared_message: Mapped["SharedGroupMessage"] = relationship("SharedGroupMessage")
+    user: Mapped["User"] = relationship("User")
+
+    def __repr__(self) -> str:
+        return f"<OrderDelivery(message={self.shared_message_id}, user={self.user_id})>"
+
+
 # Дефолтные ключевые слова убраны - пользователи добавляют свои
 DEFAULT_KEYWORDS = []
 

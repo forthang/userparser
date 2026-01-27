@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}Add Worker - Admin Panel{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-plus-lg"></i> Add Monitor Worker</h2>
+    <a href="{{ url_for('pool.workers') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back
+    </a>
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body">
+                <form method="POST">
+                    <div class="mb-3">
+                        <label class="form-label">Name *</label>
+                        <input type="text" name="name" class="form-control" required
+                               placeholder="e.g., Worker 1, Main Account">
+                        <small class="text-muted">Descriptive name for this worker</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Phone</label>
+                        <input type="text" name="phone" class="form-control"
+                               placeholder="+7XXXXXXXXXX">
+                        <small class="text-muted">Phone number of the account (optional)</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Session String *</label>
+                        <textarea name="session_string" class="form-control" rows="4" required
+                                  placeholder="Paste Pyrogram session string here"></textarea>
+                        <small class="text-muted">
+                            Pyrogram session string for the Telegram account.
+                            You can generate it using Pyrogram's StringSession.
+                        </small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Max Groups</label>
+                        <input type="number" name="max_groups" class="form-control" value="50" min="1" max="500">
+                        <small class="text-muted">Maximum number of groups this worker can monitor</small>
+                    </div>
+
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-success">
+                            <i class="bi bi-plus-lg"></i> Create Worker
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-info-circle"></i> How to get Session String
+            </div>
+            <div class="card-body">
+                <p>To create a worker, you need a Pyrogram session string from a Telegram account.</p>
+
+                <h6>Steps:</h6>
+                <ol>
+                    <li>Install Pyrogram: <code>pip install pyrogram</code></li>
+                    <li>Run this Python script:
+                        <pre><code>from pyrogram import Client
+
+api_id = YOUR_API_ID
+api_hash = "YOUR_API_HASH"
+
+with Client("session", api_id, api_hash) as app:
+    print(app.export_session_string())</code></pre>
+                    </li>
+                    <li>Login with the phone number</li>
+                    <li>Copy the session string</li>
+                </ol>
+
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>Important:</strong> Use separate accounts for workers.
+                    Don't use your personal account.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

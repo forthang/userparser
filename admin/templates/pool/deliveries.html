@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}Order Deliveries - Admin Panel{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <h2><i class="bi bi-send"></i> Order Deliveries (Last 24h)</h2>
+    <p class="text-muted">Shows which orders were sent to which users, with matched keywords</p>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        {% if deliveries %}
+        <table class="table table-sm table-hover">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>User</th>
+                    <th>Group</th>
+                    <th>Keyword</th>
+                    <th>City</th>
+                    <th>Message</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for d in deliveries %}
+                <tr>
+                    <td>
+                        <small>{{ d.delivered_at.strftime('%d.%m %H:%M') }}</small>
+                    </td>
+                    <td>
+                        <a href="{{ url_for('users.user_detail', user_id=d.user_id) }}">
+                            {{ d.username or d.telegram_id }}
+                        </a>
+                    </td>
+                    <td>
+                        <a href="{{ url_for('pool.group_detail', telegram_group_id=d.telegram_group_id) }}">
+                            {{ d.group_name }}
+                        </a>
+                    </td>
+                    <td>
+                        <span class="badge bg-primary">{{ d.keyword }}</span>
+                    </td>
+                    <td>
+                        {% if d.city %}
+                            <span class="badge bg-info">{{ d.city }}</span>
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td class="message-text" title="{{ d.message_text }}">
+                        {{ d.message_text }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted text-center">No deliveries in the last 24 hours</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

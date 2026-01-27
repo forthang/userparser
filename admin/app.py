@@ -13,6 +13,8 @@ from admin.auth import User as AdminUser
 from admin.routes.dashboard import dashboard_bp
 from admin.routes.users import users_bp
 from admin.routes.actions import actions_bp
+from admin.routes.pool import bp as pool_bp
+from admin.routes.webhook import bp as webhook_bp
 
 
 def create_app():
@@ -38,6 +40,8 @@ def create_app():
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(users_bp, url_prefix='/users')
     app.register_blueprint(actions_bp, url_prefix='/api')
+    app.register_blueprint(pool_bp)
+    app.register_blueprint(webhook_bp)  # /webhook/yukassa, /webhook/robokassa, /webhook/tinkoff
 
     @app.route('/')
     def index():

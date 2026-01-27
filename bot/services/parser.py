@@ -22,13 +22,22 @@ class MessageParser:
     def _find_keyword_match(self, text_lower: str) -> Optional[str]:
         """
         Поиск ключевого слова в тексте.
-        Ищет точное совпадение слова (как отдельного слова в тексте).
+        Ищет совпадение слова с учётом кириллицы и пунктуации.
+        "курск" найдёт: "Курск", "Курск.", "Курск!", "(Курск)", "г.Курск" и т.д.
         """
+        # Нормализуем текст - убираем лишние пробелы
+        text_normalized = ' ' + text_lower + ' '
+
         for i, keyword in enumerate(self.keywords):
-            # Поиск точного совпадения слова с границами
-            # \b - граница слова, re.IGNORECASE для игнорирования регистра
-            pattern = rf'\b{re.escape(keyword)}\b'
-            if re.search(pattern, text_lower):
+            # Паттерн для кириллицы: слово может быть окружено:
+            # - пробелами, началом/концом строки
+            # - знаками препинания: . , ! ? : ; - ( ) " ' и т.д.
+            # - цифрами или латиницей (но не другой кириллицей)
+
+            # Используем негативный lookbehind/lookahead для кириллицы
+            # [^а-яёa-z0-9] - не буква и не цифра перед/после слова
+            pattern = rf'(?<![а-яёa-z0-9]){re.escape(keyword)}(?![а-яёa-z0-9])'
+            if re.search(pattern, text_normalized):
                 return self.original_keywords[i]
 
         return None
@@ -96,13 +105,13 @@ def is_order_message(
     if not text:
         return False
 
-    text_lower = text.lower()
+    text_lower = ' ' + text.lower() + ' '
 
     keyword_found = False
     for keyword in keywords:
         keyword_lower = keyword.lower()
-        # Поиск точного совпадения слова с границами
-        pattern = rf'\b{re.escape(keyword_lower)}\b'
+        # Паттерн для кириллицы с учётом пунктуации
+        pattern = rf'(?<![а-яёa-z0-9]){re.escape(keyword_lower)}(?![а-яёa-z0-9])'
         if re.search(pattern, text_lower):
             keyword_found = True
             break

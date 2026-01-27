@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}{{ info.group_name }} - Chat History{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-chat-dots"></i> {{ info.group_name }}</h2>
+    <a href="{{ url_for('pool.groups') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back
+    </a>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">Group Info</div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr>
+                        <th>Telegram ID:</th>
+                        <td><code>{{ info.telegram_group_id }}</code></td>
+                    </tr>
+                    <tr>
+                        <th>Worker:</th>
+                        <td>
+                            <a href="{{ url_for('pool.worker_detail', worker_id=info.worker_id) }}">
+                                {{ info.worker_name }}
+                            </a>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Messages (24h):</th>
+                        <td>{{ messages|length }}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-people"></i> Users Monitoring ({{ info.users_monitoring|length }})
+            </div>
+            <div class="card-body">
+                {% if info.users_monitoring %}
+                <div class="d-flex flex-wrap gap-2">
+                    {% for u in info.users_monitoring %}
+                    <a href="{{ url_for('users.user_detail', user_id=u.id) }}" class="badge bg-primary text-decoration-none">
+                        {{ u.username or u.telegram_id }}
+                    </a>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-muted mb-0">No users monitoring this group</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <i class="bi bi-clock-history"></i> Chat History (Last 24h)
+    </div>
+    <div class="card-body">
+        {% if messages %}
+        <table class="table table-sm">
+            <thead>
+                <tr>
+                    <th width="120">Time</th>
+                    <th width="150">Sender</th>
+                    <th>Message</th>
+                    <th width="200">Delivered To</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for msg in messages %}
+                <tr class="{{ 'matched' if msg.deliveries else 'unmatched' }}">
+                    <td>
+                        <small>{{ msg.created_at.strftime('%d.%m %H:%M:%S') }}</small>
+                    </td>
+                    <td>
+                        {% if msg.sender_username %}
+                            @{{ msg.sender_username }}
+                        {% elif msg.sender_id %}
+                            <code>{{ msg.sender_id }}</code>
+                        {% else %}
+                            Unknown
+                        {% endif %}
+                    </td>
+                    <td class="message-text" title="{{ msg.message_text }}">
+                        {{ msg.message_text[:150] }}{% if msg.message_text|length > 150 %}...{% endif %}
+                    </td>
+                    <td>
+                        {% if msg.deliveries %}
+                            {% for d in msg.deliveries %}
+                            <div class="mb-1">
+                                <a href="{{ url_for('users.user_detail', user_id=d.user_id) }}"
+                                   class="badge bg-success text-decoration-none">
+                                    {{ d.username or d.telegram_id }}
+                                </a>
+                                <small class="text-muted">
+                                    ({{ d.keyword }}{% if d.city %}, {{ d.city }}{% endif %})
+                                </small>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted text-center">No messages in the last 24 hours</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

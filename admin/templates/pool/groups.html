@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}Monitored Groups - Admin Panel{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-chat-dots"></i> Monitored Groups</h2>
+    <button class="btn btn-primary" onclick="redistributeGroups()">
+        <i class="bi bi-shuffle"></i> Redistribute
+    </button>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>Group Name</th>
+                    <th>Telegram ID</th>
+                    <th>Worker</th>
+                    <th>Messages (24h)</th>
+                    <th>Orders Sent</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for g in groups %}
+                <tr>
+                    <td>
+                        <a href="{{ url_for('pool.group_detail', telegram_group_id=g.telegram_group_id) }}">
+                            {{ g.group_name }}
+                        </a>
+                    </td>
+                    <td><code>{{ g.telegram_group_id }}</code></td>
+                    <td>
+                        <a href="{{ url_for('pool.worker_detail', worker_id=g.worker_id) }}">
+                            {{ g.worker_name }}
+                        </a>
+                    </td>
+                    <td>
+                        <span class="badge bg-secondary">{{ g.messages_24h }}</span>
+                    </td>
+                    <td>
+                        {% if g.orders_sent > 0 %}
+                            <span class="badge bg-success">{{ g.orders_sent }}</span>
+                        {% else %}
+                            <span class="badge bg-light text-dark">0</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{{ url_for('pool.group_detail', telegram_group_id=g.telegram_group_id) }}"
+                           class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-eye"></i> History
+                        </a>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted">
+                        No groups are being monitored
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function redistributeGroups() {
+    if (!confirm('Redistribute all groups across workers?')) return;
+    const result = await apiCall('/pool/api/redistribute');
+    alert(result.success ? result.message : result.error);
+    if (result.success) location.reload();
+}
+</script>
+{% endblock %}

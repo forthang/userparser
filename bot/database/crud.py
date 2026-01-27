@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.database.models import (
     User, Group, Keyword, City, Payment, Order,
     BlacklistedGroup, BotSettings, UserLog, GroupMessage,
+    MonitorWorker, GroupAssignment, SharedGroupMessage, OrderDelivery,
     DEFAULT_KEYWORDS, DEFAULT_HELP_TEXT
 )
 
@@ -693,6 +694,368 @@ class GroupMessageCRUD:
         threshold = datetime.utcnow() - timedelta(hours=24)
         result = await session.execute(
             delete(GroupMessage).where(GroupMessage.created_at < threshold)
+        )
+        await session.commit()
+        return result.rowcount
+
+
+# ============ Shared Monitoring Pool CRUD ============
+
+class MonitorWorkerCRUD:
+    """CRUD операции для воркер-аккаунтов"""
+
+    @staticmethod
+    async def get_all(session: AsyncSession) -> List[MonitorWorker]:
+        """Получает всех воркеров"""
+        result = await session.execute(
+            select(MonitorWorker).order_by(MonitorWorker.name)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_active(session: AsyncSession) -> List[MonitorWorker]:
+        """Получает активных воркеров"""
+        result = await session.execute(
+            select(MonitorWorker)
+            .where(MonitorWorker.is_active == True)
+            .order_by(MonitorWorker.name)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_by_id(session: AsyncSession, worker_id: int) -> Optional[MonitorWorker]:
+        """Получает воркера по ID"""
+        return await session.get(MonitorWorker, worker_id)
+
+    @staticmethod
+    async def create(
+        session: AsyncSession,
+        name: str,
+        session_string: str,
+        phone: Optional[str] = None,
+        max_groups: int = 50,
+    ) -> MonitorWorker:
+        """Создает нового воркера"""
+        worker = MonitorWorker(
+            name=name,
+            session_string=session_string,
+            phone=phone,
+            max_groups=max_groups,
+        )
+        session.add(worker)
+        await session.commit()
+        await session.refresh(worker)
+        return worker
+
+    @staticmethod
+    async def update_status(
+        session: AsyncSession,
+        worker_id: int,
+        is_active: bool,
+        last_error: Optional[str] = None,
+    ) -> None:
+        """Обновляет статус воркера"""
+        stmt = (
+            update(MonitorWorker)
+            .where(MonitorWorker.id == worker_id)
+            .values(is_active=is_active, last_error=last_error, last_active_at=datetime.utcnow())
+        )
+        await session.execute(stmt)
+        await session.commit()
+
+    @staticmethod
+    async def delete(session: AsyncSession, worker_id: int) -> bool:
+        """Удаляет воркера"""
+        result = await session.execute(
+            delete(MonitorWorker).where(MonitorWorker.id == worker_id)
+        )
+        await session.commit()
+        return result.rowcount > 0
+
+    @staticmethod
+    async def get_worker_with_least_groups(session: AsyncSession) -> Optional[MonitorWorker]:
+        """Получает воркера с наименьшим количеством групп"""
+        workers = await MonitorWorkerCRUD.get_active(session)
+        if not workers:
+            return None
+
+        # Подсчитываем количество групп для каждого воркера
+        min_count = float('inf')
+        best_worker = None
+
+        for worker in workers:
+            result = await session.execute(
+                select(GroupAssignment)
+                .where(
+                    GroupAssignment.worker_id == worker.id,
+                    GroupAssignment.is_active == True
+                )
+            )
+            count = len(list(result.scalars().all()))
+            if count < min_count and count < worker.max_groups:
+                min_count = count
+                best_worker = worker
+
+        return best_worker
+
+
+class GroupAssignmentCRUD:
+    """CRUD операции для назначения групп на воркеров"""
+
+    @staticmethod
+    async def get_all(session: AsyncSession) -> List[GroupAssignment]:
+        """Получает все назначения"""
+        result = await session.execute(
+            select(GroupAssignment).order_by(GroupAssignment.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_by_group_id(
+        session: AsyncSession,
+        telegram_group_id: int,
+    ) -> Optional[GroupAssignment]:
+        """Получает назначение по telegram_group_id"""
+        result = await session.execute(
+            select(GroupAssignment)
+            .where(
+                GroupAssignment.telegram_group_id == telegram_group_id,
+                GroupAssignment.is_active == True
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_worker_groups(
+        session: AsyncSession,
+        worker_id: int,
+    ) -> List[GroupAssignment]:
+        """Получает группы воркера"""
+        result = await session.execute(
+            select(GroupAssignment)
+            .where(
+                GroupAssignment.worker_id == worker_id,
+                GroupAssignment.is_active == True
+            )
+            .order_by(GroupAssignment.group_name)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def assign_group(
+        session: AsyncSession,
+        worker_id: int,
+        telegram_group_id: int,
+        group_name: str,
+    ) -> GroupAssignment:
+        """Назначает группу на воркера"""
+        # Проверяем, не назначена ли уже
+        existing = await GroupAssignmentCRUD.get_by_group_id(session, telegram_group_id)
+        if existing:
+            return existing
+
+        assignment = GroupAssignment(
+            worker_id=worker_id,
+            telegram_group_id=telegram_group_id,
+            group_name=group_name,
+        )
+        session.add(assignment)
+        await session.commit()
+        await session.refresh(assignment)
+        return assignment
+
+    @staticmethod
+    async def unassign_group(
+        session: AsyncSession,
+        telegram_group_id: int,
+    ) -> bool:
+        """Убирает назначение группы"""
+        result = await session.execute(
+            delete(GroupAssignment)
+            .where(GroupAssignment.telegram_group_id == telegram_group_id)
+        )
+        await session.commit()
+        return result.rowcount > 0
+
+    @staticmethod
+    async def get_all_monitored_groups(session: AsyncSession) -> List[int]:
+        """Получает ID всех мониторимых групп"""
+        result = await session.execute(
+            select(GroupAssignment.telegram_group_id)
+            .where(GroupAssignment.is_active == True)
+        )
+        return [row[0] for row in result.fetchall()]
+
+
+class SharedGroupMessageCRUD:
+    """CRUD операции для сообщений общего пула"""
+
+    @staticmethod
+    async def add(
+        session: AsyncSession,
+        worker_id: int,
+        telegram_group_id: int,
+        group_name: str,
+        message_id: int,
+        message_text: str,
+        sender_id: Optional[int] = None,
+        sender_username: Optional[str] = None,
+    ) -> SharedGroupMessage:
+        """Добавляет сообщение"""
+        msg = SharedGroupMessage(
+            worker_id=worker_id,
+            telegram_group_id=telegram_group_id,
+            group_name=group_name,
+            message_id=message_id,
+            message_text=message_text,
+            sender_id=sender_id,
+            sender_username=sender_username,
+        )
+        session.add(msg)
+        await session.commit()
+        await session.refresh(msg)
+        return msg
+
+    @staticmethod
+    async def get_by_group(
+        session: AsyncSession,
+        telegram_group_id: int,
+        limit: int = 500,
+    ) -> List[SharedGroupMessage]:
+        """Получает сообщения группы за последние 24 часа"""
+        threshold = datetime.utcnow() - timedelta(hours=24)
+        result = await session.execute(
+            select(SharedGroupMessage)
+            .where(
+                SharedGroupMessage.telegram_group_id == telegram_group_id,
+                SharedGroupMessage.created_at >= threshold
+            )
+            .order_by(SharedGroupMessage.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_all_recent(
+        session: AsyncSession,
+        limit: int = 1000,
+    ) -> List[SharedGroupMessage]:
+        """Получает все недавние сообщения"""
+        threshold = datetime.utcnow() - timedelta(hours=24)
+        result = await session.execute(
+            select(SharedGroupMessage)
+            .where(SharedGroupMessage.created_at >= threshold)
+            .order_by(SharedGroupMessage.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def cleanup_old(session: AsyncSession) -> int:
+        """Удаляет сообщения старше 24 часов"""
+        threshold = datetime.utcnow() - timedelta(hours=24)
+        result = await session.execute(
+            delete(SharedGroupMessage).where(SharedGroupMessage.created_at < threshold)
+        )
+        await session.commit()
+        return result.rowcount
+
+
+class OrderDeliveryCRUD:
+    """CRUD операции для доставки заказов"""
+
+    @staticmethod
+    async def add(
+        session: AsyncSession,
+        shared_message_id: int,
+        user_id: int,
+        matched_keyword: str,
+        matched_city: Optional[str] = None,
+    ) -> OrderDelivery:
+        """Добавляет запись о доставке"""
+        delivery = OrderDelivery(
+            shared_message_id=shared_message_id,
+            user_id=user_id,
+            matched_keyword=matched_keyword,
+            matched_city=matched_city,
+        )
+        session.add(delivery)
+        await session.commit()
+        await session.refresh(delivery)
+        return delivery
+
+    @staticmethod
+    async def get_by_message(
+        session: AsyncSession,
+        shared_message_id: int,
+    ) -> List[OrderDelivery]:
+        """Получает все доставки для сообщения"""
+        result = await session.execute(
+            select(OrderDelivery)
+            .where(OrderDelivery.shared_message_id == shared_message_id)
+            .order_by(OrderDelivery.delivered_at.desc())
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_by_user(
+        session: AsyncSession,
+        user_id: int,
+        limit: int = 100,
+    ) -> List[OrderDelivery]:
+        """Получает доставки пользователя"""
+        threshold = datetime.utcnow() - timedelta(hours=24)
+        result = await session.execute(
+            select(OrderDelivery)
+            .where(
+                OrderDelivery.user_id == user_id,
+                OrderDelivery.delivered_at >= threshold
+            )
+            .order_by(OrderDelivery.delivered_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_stats_by_group(
+        session: AsyncSession,
+        telegram_group_id: int,
+    ) -> dict:
+        """Получает статистику доставок по группе"""
+        threshold = datetime.utcnow() - timedelta(hours=24)
+
+        # Получаем сообщения группы
+        messages = await session.execute(
+            select(SharedGroupMessage)
+            .where(
+                SharedGroupMessage.telegram_group_id == telegram_group_id,
+                SharedGroupMessage.created_at >= threshold
+            )
+        )
+        message_ids = [m.id for m in messages.scalars().all()]
+
+        if not message_ids:
+            return {"total_messages": 0, "delivered_orders": 0, "users_received": 0}
+
+        # Получаем доставки
+        deliveries = await session.execute(
+            select(OrderDelivery)
+            .where(OrderDelivery.shared_message_id.in_(message_ids))
+        )
+        delivery_list = list(deliveries.scalars().all())
+
+        return {
+            "total_messages": len(message_ids),
+            "delivered_orders": len(delivery_list),
+            "users_received": len(set(d.user_id for d in delivery_list)),
+        }
+
+    @staticmethod
+    async def cleanup_old(session: AsyncSession) -> int:
+        """Удаляет старые доставки (старше 24 часов)"""
+        threshold = datetime.utcnow() - timedelta(hours=24)
+        result = await session.execute(
+            delete(OrderDelivery).where(OrderDelivery.delivered_at < threshold)
         )
         await session.commit()
         return result.rowcount
