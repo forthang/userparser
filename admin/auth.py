@@ -1,5 +1,5 @@
 import os
-from flask_login import UserMixin
+from flask_login import UserMixin, login_required
 
 
 class User(UserMixin):
